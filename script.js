@@ -21,7 +21,7 @@ if (document.getElementById('profileForm')) {
         const passcode = document.getElementById('passcode').value;
         const createBtn = document.getElementById('createBtn');
         
-        createBtn.textContent = 'Creating...';
+        createBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Creating Profile...';
         createBtn.disabled = true;
         
         try {
@@ -30,7 +30,7 @@ if (document.getElementById('profileForm')) {
             
             if (!existingProfiles.empty) {
                 alert('Display name already exists. Please choose another.');
-                createBtn.textContent = 'Create Profile';
+                createBtn.innerHTML = '<i class="fas fa-magic mr-2"></i>Create My Profile';
                 createBtn.disabled = false;
                 return;
             }
@@ -44,8 +44,11 @@ if (document.getElementById('profileForm')) {
             });
             
             // Show success message with CORRECTED URLs
-            const profileUrl = `${window.location.origin}${window.location.pathname.replace('index.html', '')}send.html?id=${docRef.id}`;
-            const dashboardUrl = `${window.location.origin}${window.location.pathname.replace('index.html', '')}dashboard.html?id=${docRef.id}`;
+            const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
+            const baseUrl = `${window.location.origin}${basePath}`;
+            
+            const profileUrl = `${baseUrl}/send.html?id=${docRef.id}`;
+            const dashboardUrl = `${baseUrl}/dashboard.html?id=${docRef.id}`;
             
             document.getElementById('profileUrl').value = profileUrl;
             document.getElementById('dashboardLink').href = dashboardUrl;
@@ -53,10 +56,13 @@ if (document.getElementById('profileForm')) {
             document.getElementById('createForm').style.display = 'none';
             document.getElementById('successMessage').style.display = 'block';
             
+            // Add some celebration
+            console.log('Profile created successfully!', docRef.id);
+            
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Error creating profile:', error);
             alert('Error creating profile. Please try again.');
-            createBtn.textContent = 'Create Profile';
+            createBtn.innerHTML = '<i class="fas fa-magic mr-2"></i>Create My Profile';
             createBtn.disabled = false;
         }
     });
@@ -71,7 +77,7 @@ if (document.getElementById('quickLoginForm')) {
         const passcode = document.getElementById('existingPasscode').value;
         const loginBtn = document.getElementById('loginBtn');
         
-        loginBtn.textContent = 'Checking...';
+        loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
         loginBtn.disabled = true;
         
         try {
@@ -79,17 +85,18 @@ if (document.getElementById('quickLoginForm')) {
             
             if (doc.exists && doc.data().passcode === passcode) {
                 // Redirect to dashboard
-                window.location.href = `dashboard.html?id=${profileId}`;
+                const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
+                window.location.href = `${basePath}/dashboard.html?id=${profileId}`;
             } else {
                 alert('Invalid Profile ID or passcode. Please check your details.');
             }
             
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Error accessing profile:', error);
             alert('Error accessing profile. Please check your Profile ID.');
         }
         
-        loginBtn.textContent = 'Access My Dashboard';
+        loginBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access My Dashboard';
         loginBtn.disabled = false;
     });
 }
@@ -127,7 +134,7 @@ if (document.getElementById('findProfileForm')) {
             }
             
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Error searching for profile:', error);
             alert('Error searching for profile.');
         }
     });
@@ -138,97 +145,88 @@ function copyToClipboard() {
     const profileUrl = document.getElementById('profileUrl');
     profileUrl.select();
     document.execCommand('copy');
-    alert('Link copied to clipboard!');
+    
+    // Show a nice success message
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="fas fa-check"></i>';
+    button.classList.add('bg-green-500');
+    
+    setTimeout(() => {
+        button.innerHTML = originalText;
+        button.classList.remove('bg-green-500');
+    }, 2000);
 }
 
-// Load profile for sending message
+// Load profile for sending message - FIXED VERSION
 async function loadProfileForSending(profileId) {
     try {
+        console.log('Loading profile:', profileId);
         const doc = await db.collection('profiles').doc(profileId).get();
         
         if (doc.exists) {
             const profile = doc.data();
+            console.log('Profile loaded:', profile);
+            
             document.getElementById('profileName').textContent = profile.displayName;
             document.getElementById('loadingMessage').style.display = 'none';
-            document.getElementById('profileInfo').style.display = 'block';
-            document.getElementById('messageForm').style.display = 'block';
+            document.getElementById('messageSection').classList.remove('hidden');
             
-            // Handle message form
+            // Handle message form submission
             document.getElementById('messageForm').addEventListener('submit', async function(e) {
                 e.preventDefault();
                 
                 const content = document.getElementById('messageContent').value;
                 const sendBtn = document.getElementById('sendBtn');
                 
-                sendBtn.textContent = 'Sending...';
+                sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending Message...';
                 sendBtn.disabled = true;
                 
                 try {
-                    // Generate a unique conversation ID for bidirectional chat
+                    // Generate unique conversation ID
                     const conversationId = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                     
-                    // Create the message with conversation tracking
+                    // Add message to Firestore - FIXED
                     const docRef = await db.collection('messages').add({
                         profileId: profileId,
                         conversationId: conversationId,
                         content: content,
-                        timestamp: new Date(),
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                         isAnonymous: true,
                         responses: [],
                         senderCanReply: true
                     });
                     
-                    // Show success with conversation link
-                    document.getElementById('messageForm').style.display = 'none';
+                    console.log('Message sent successfully:', docRef.id);
+                    
+                    // Generate conversation link
+                    const basePath = window.location.pathname.replace('send.html', '').replace(/\/$/, '');
+                    const chatLink = `${window.location.origin}${basePath}/chat.html?conv=${conversationId}`;
+                    
+                    // Update UI
+                    document.getElementById('chatLink').value = chatLink;
+                    document.getElementById('conversationLink').href = chatLink;
+                    
+                    document.getElementById('messageSection').style.display = 'none';
                     document.getElementById('sentMessage').style.display = 'block';
                     
-                    // Add the conversation link
-                    const chatLink = `${window.location.origin}${window.location.pathname.replace('send.html', '')}chat.html?conv=${conversationId}`;
-                    
-                    document.getElementById('sentMessage').innerHTML = `
-                        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-6">
-                            <h3 class="text-lg font-semibold">Message Sent!</h3>
-                            <p class="text-sm mt-1">Your anonymous message has been delivered.</p>
-                        </div>
-                        
-                        <div class="bg-blue-50 border border-blue-200 p-4 rounded mb-6">
-                            <p class="text-sm text-blue-700 mb-2">💬 <strong>Want to see if they reply?</strong></p>
-                            <p class="text-xs text-blue-600 mb-3">Bookmark this link to check for replies:</p>
-                            <div class="flex">
-                                <input type="text" id="chatLink" value="${chatLink}" readonly class="flex-1 p-2 bg-white border border-gray-300 rounded-l-md text-xs">
-                                <button onclick="copyChatLink()" class="bg-blue-500 text-white px-3 py-1 rounded-r-md hover:bg-blue-600 text-xs">Copy</button>
-                            </div>
-                        </div>
-                        
-                        <div class="space-y-3">
-                            <a href="${chatLink}" class="block w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 text-center">
-                                Go to Conversation
-                            </a>
-                            <button onclick="sendAnother()" class="w-full bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600">
-                                Send Another Message
-                            </button>
-                            <a href="search.html" class="block w-full bg-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-400 text-center">
-                                Find Other Profiles
-                            </a>
-                        </div>
-                    `;
-                    
                 } catch (error) {
-                    console.error('Error:', error);
-                    alert('Error sending message. Please try again.');
-                    sendBtn.textContent = 'Send Anonymous Message';
+                    console.error('Error sending message:', error);
+                    alert('Error sending message: ' + error.message);
+                    sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Send Anonymous Message';
                     sendBtn.disabled = false;
                 }
             });
             
         } else {
+            console.log('Profile not found');
             document.getElementById('loadingMessage').style.display = 'none';
-            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorMessage').classList.remove('hidden');
         }
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Error loading profile:', error);
         document.getElementById('loadingMessage').style.display = 'none';
-        document.getElementById('errorMessage').style.display = 'block';
+        document.getElementById('errorMessage').classList.remove('hidden');
     }
 }
 
@@ -237,19 +235,30 @@ function copyChatLink() {
     const chatLink = document.getElementById('chatLink');
     chatLink.select();
     document.execCommand('copy');
-    alert('Conversation link copied! Bookmark this to check for replies.');
+    
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="fas fa-check"></i>';
+    button.classList.add('bg-green-500');
+    
+    setTimeout(() => {
+        button.innerHTML = originalText;
+        button.classList.remove('bg-green-500');
+    }, 2000);
 }
 
 // Send another message function
 function sendAnother() {
     document.getElementById('messageContent').value = '';
     document.getElementById('sentMessage').style.display = 'none';
-    document.getElementById('messageForm').style.display = 'block';
-    document.getElementById('sendBtn').textContent = 'Send Anonymous Message';
-    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('messageSection').classList.remove('hidden');
+    
+    const sendBtn = document.getElementById('sendBtn');
+    sendBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Send Anonymous Message';
+    sendBtn.disabled = false;
 }
 
-// Dashboard functionality
+// Dashboard functionality - UPDATED
 async function initDashboard(profileId) {
     document.getElementById('authForm').addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -257,7 +266,7 @@ async function initDashboard(profileId) {
         const passcode = document.getElementById('loginPasscode').value;
         const authBtn = document.getElementById('authBtn');
         
-        authBtn.textContent = 'Checking...';
+        authBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
         authBtn.disabled = true;
         
         try {
@@ -272,44 +281,56 @@ async function initDashboard(profileId) {
                 document.getElementById('profileDisplayName').textContent = profile.displayName;
                 
                 // FIXED: Correct URL generation
-                const shareUrl = `${window.location.origin}${window.location.pathname.replace('dashboard.html', '')}send.html?id=${profileId}`;
+                const basePath = window.location.pathname.replace('dashboard.html', '').replace(/\/$/, '');
+                const shareUrl = `${window.location.origin}${basePath}/send.html?id=${profileId}`;
                 document.getElementById('shareUrl').value = shareUrl;
                 
-                // Load messages
+                // Load messages with real-time updates
                 loadMessages(profileId);
                 
             } else {
                 alert('Invalid passcode. Please try again.');
-                authBtn.textContent = 'Access Dashboard';
+                authBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access Dashboard';
                 authBtn.disabled = false;
             }
             
         } catch (error) {
-            console.error('Error:', error);
-            alert('Error accessing dashboard. Please try again.');
-            authBtn.textContent = 'Access Dashboard';
+            console.error('Error authenticating:', error);
+            alert('Error accessing dashboard: ' + error.message);
+            authBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access Dashboard';
             authBtn.disabled = false;
         }
     });
 }
 
-// Load messages for dashboard
+// Load messages for dashboard - IMPROVED
 function loadMessages(profileId) {
+    console.log('Loading messages for profile:', profileId);
+    
+    // Real-time listener for messages
     db.collection('messages')
         .where('profileId', '==', profileId)
         .orderBy('timestamp', 'desc')
         .onSnapshot(function(querySnapshot) {
             const messages = [];
             querySnapshot.forEach(function(doc) {
-                messages.push({ id: doc.id, ...doc.data() });
+                const data = doc.data();
+                messages.push({ 
+                    id: doc.id, 
+                    ...data,
+                    timestamp: data.timestamp || new Date() // Fallback for timestamp
+                });
             });
             
+            console.log('Messages loaded:', messages.length);
             document.getElementById('messageCount').textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
             
             if (messages.length === 0) {
                 document.getElementById('messagesContainer').innerHTML = `
-                    <div class="text-center py-16 bg-white rounded-lg shadow-md">
-                        <div class="text-gray-400 text-6xl mb-4">📭</div>
+                    <div class="text-center py-16 bg-white rounded-2xl shadow-lg">
+                        <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <i class="fas fa-inbox text-3xl text-blue-500"></i>
+                        </div>
                         <h3 class="text-xl font-medium text-gray-600 mb-2">No messages yet</h3>
                         <p class="text-gray-500">Share your profile link to start receiving anonymous messages!</p>
                     </div>
@@ -317,45 +338,63 @@ function loadMessages(profileId) {
             } else {
                 displayMessages(messages);
             }
+        }, function(error) {
+            console.error('Error loading messages:', error);
         });
 }
 
-// Display messages
+// Display messages - ENHANCED
 function displayMessages(messages) {
     const container = document.getElementById('messagesContainer');
     container.innerHTML = '';
     
-    messages.forEach(message => {
+    messages.forEach((message, index) => {
         const messageDiv = document.createElement('div');
-        messageDiv.className = 'bg-white rounded-lg shadow-md p-6 mb-4';
+        messageDiv.className = 'bg-white rounded-2xl shadow-lg p-6 mb-6 card-hover';
+        messageDiv.style.animationDelay = `${index * 0.1}s`;
         
+        const basePath = window.location.pathname.replace('dashboard.html', '').replace(/\/$/, '');
         const chatLink = message.conversationId ? 
-            `${window.location.origin}${window.location.pathname.replace('dashboard.html', '')}chat.html?conv=${message.conversationId}` : 
+            `${window.location.origin}${basePath}/chat.html?conv=${message.conversationId}` : 
             null;
         
         messageDiv.innerHTML = `
             <div class="flex justify-between items-start mb-4">
-                <div class="flex items-center space-x-2">
-                    <div class="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center">
-                        <span class="text-white text-sm">?</span>
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                        <i class="fas fa-user-secret text-white"></i>
                     </div>
-                    <span class="font-medium text-gray-600">Anonymous User</span>
+                    <div>
+                        <span class="font-semibold text-gray-800">Anonymous User</span>
+                        <div class="text-sm text-gray-500">
+                            ${message.timestamp?.toDate?.()?.toLocaleString() || 'Just now'}
+                        </div>
+                    </div>
                 </div>
                 <div class="text-right">
-                    <span class="text-xs text-gray-400 block">${message.timestamp?.toDate?.()?.toLocaleString() || 'Just now'}</span>
-                    ${chatLink ? `<a href="${chatLink}" class="text-xs text-blue-500 hover:text-blue-700">View Full Chat</a>` : ''}
+                    ${chatLink ? `
+                        <a href="${chatLink}" class="inline-flex items-center text-sm text-blue-500 hover:text-blue-700 bg-blue-50 px-3 py-1 rounded-full">
+                            <i class="fas fa-external-link-alt mr-1"></i>
+                            Full Chat
+                        </a>
+                    ` : ''}
                 </div>
             </div>
             
-            <p class="text-gray-800 mb-4 text-lg">${message.content}</p>
+            <div class="bg-gray-50 p-4 rounded-xl mb-4">
+                <p class="text-gray-800 text-lg leading-relaxed">${message.content}</p>
+            </div>
             
             ${message.responses && message.responses.length > 0 ? `
-                <div class="bg-gray-50 rounded-md p-4 mb-4">
-                    <h4 class="text-sm font-semibold mb-3 text-gray-700">Conversation:</h4>
-                    <div class="space-y-3">
-                        ${message.responses.map(response => `
-                            <div class="${response.isOwner ? 'bg-blue-100 border-l-4 border-blue-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded-md">
-                                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                <div class="bg-blue-50 rounded-xl p-4 mb-4 border-l-4 border-blue-400">
+                    <h4 class="text-sm font-semibold mb-3 text-blue-800 flex items-center">
+                        <i class="fas fa-comments mr-2"></i>
+                        Conversation (${message.responses.length} ${message.responses.length === 1 ? 'reply' : 'replies'})
+                    </h4>
+                    <div class="space-y-3 max-h-40 overflow-y-auto">
+                        ${message.responses.slice(-3).map(response => `
+                            <div class="${response.isOwner ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
+                                <div class="flex justify-between text-xs text-gray-600 mb-1">
                                     <span class="font-medium">${response.isOwner ? 'You' : 'Anonymous'}</span>
                                     <span>${response.timestamp?.toDate?.()?.toLocaleString()}</span>
                                 </div>
@@ -363,253 +402,57 @@ function displayMessages(messages) {
                             </div>
                         `).join('')}
                     </div>
+                    ${message.responses.length > 3 ? `
+                        <div class="text-center mt-3">
+                            <a href="${chatLink}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                View all ${message.responses.length} replies →
+                            </a>
+                        </div>
+                    ` : ''}
                 </div>
             ` : ''}
             
-            <div id="reply-${message.id}" class="hidden bg-blue-50 p-4 rounded-md">
-                <textarea id="replyText-${message.id}" placeholder="Write your reply..." class="w-full p-3 border border-gray-300 rounded-md mb-3 h-24 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
+            <div id="reply-${message.id}" class="hidden bg-blue-50 p-4 rounded-xl border-2 border-blue-200">
+                <div class="flex items-center mb-3">
+                    <i class="fas fa-reply mr-2 text-blue-600"></i>
+                    <span class="font-semibold text-blue-800">Reply to this message</span>
+                </div>
+                <textarea id="replyText-${message.id}" placeholder="Write your reply..." class="w-full p-3 border-2 border-blue-200 rounded-lg mb-3 h-24 resize-none focus:border-blue-500 transition-all outline-none"></textarea>
                 <div class="flex gap-2">
-                    <button onclick="sendReply('${message.id}')" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">Send Reply</button>
-                    <button onclick="cancelReply('${message.id}')" class="bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600">Cancel</button>
+                    <button onclick="sendReply('${message.id}')" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-all">
+                        <i class="fas fa-send mr-1"></i>Send Reply
+                    </button>
+                    <button onclick="cancelReply('${message.id}')" class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-all">
+                        Cancel
+                    </button>
                 </div>
             </div>
             
-            <button onclick="showReply('${message.id}')" id="replyBtn-${message.id}" class="text-blue-500 hover:text-blue-700 font-medium">💬 Reply to this message</button>
+            <button onclick="showReply('${message.id}')" id="replyBtn-${message.id}" class="flex items-center text-blue-600 hover:text-blue-800 font-medium transition-all">
+                <i class="fas fa-reply mr-2"></i>Reply to this message
+            </button>
         `;
         
         container.appendChild(messageDiv);
     });
 }
 
-// Reply functions
+// Reply functions - ENHANCED
 function showReply(messageId) {
-    document.getElementById(`reply-${messageId}`).style.display = 'block';
+    document.getElementById(`reply-${messageId}`).classList.remove('hidden');
     document.getElementById(`replyBtn-${messageId}`).style.display = 'none';
+    document.getElementById(`replyText-${messageId}`).focus();
 }
 
 function cancelReply(messageId) {
-    document.getElementById(`reply-${messageId}`).style.display = 'none';
+    document.getElementById(`reply-${messageId}`).classList.add('hidden');
     document.getElementById(`replyBtn-${messageId}`).style.display = 'block';
     document.getElementById(`replyText-${messageId}`).value = '';
 }
 
 async function sendReply(messageId) {
-    const replyText = document.getElementById(`replyText-${messageId}`).value;
-    if (!replyText.trim()) return;
+    const replyText = document.getElementById(`replyText-${messageId}`).value.trim();
+    if (!replyText) return;
     
     try {
-        const messageRef = db.collection('messages').doc(messageId);
-        const messageDoc = await messageRef.get();
-        const currentMessage = messageDoc.data();
-        
-        await messageRef.update({
-            responses: [...(currentMessage.responses || []), {
-                content: replyText,
-                timestamp: new Date(),
-                isOwner: true
-            }]
-        });
-        
-        cancelReply(messageId);
-        
-    } catch (error) {
-        console.error('Error:', error);
-        alert('Error sending reply. Please try again.');
-    }
-}
-
-// Copy share URL
-function copyShareUrl() {
-    const shareUrl = document.getElementById('shareUrl');
-    shareUrl.select();
-    document.execCommand('copy');
-    alert('Link copied to clipboard!');
-}
-
-// Search functionality
-if (document.getElementById('searchForm')) {
-    document.getElementById('searchForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const searchTerm = document.getElementById('searchTerm').value;
-        const searchBtn = document.getElementById('searchBtn');
-        
-        searchBtn.textContent = 'Searching...';
-        searchBtn.disabled = true;
-        
-        try {
-            const querySnapshot = await db.collection('profiles')
-                .where('displayName', '>=', searchTerm)
-                .where('displayName', '<=', searchTerm + '\uf8ff')
-                .get();
-            
-            const results = [];
-            querySnapshot.forEach(doc => {
-                results.push({ id: doc.id, ...doc.data() });
-            });
-            
-            displaySearchResults(results, searchTerm);
-            
-        } catch (error) {
-            console.error('Error:', error);
-            alert('Error searching profiles. Please try again.');
-        }
-        
-        searchBtn.textContent = 'Search';
-        searchBtn.disabled = false;
-    });
-}
-
-function displaySearchResults(results, searchTerm) {
-    const container = document.getElementById('searchResults');
-    const noResults = document.getElementById('noResults');
-    
-    if (results.length === 0) {
-        container.innerHTML = '';
-        noResults.querySelector('p').innerHTML = `No profiles matching "<strong>${searchTerm}</strong>" were found.`;
-        noResults.style.display = 'block';
-    } else {
-        noResults.style.display = 'none';
-        
-        // FIXED: Correct URL generation for search results
-        const basePath = window.location.pathname.replace('search.html', '');
-        
-        container.innerHTML = results.map(profile => `
-            <div class="bg-white rounded-lg shadow-md p-6 flex justify-between items-center mb-4">
-                <div>
-                    <h3 class="text-xl font-semibold text-gray-800 mb-2">${profile.displayName}</h3>
-                    <div class="flex items-center text-sm text-gray-500 space-x-4">
-                        <span>📅 Created ${profile.createdAt?.toDate?.()?.toLocaleDateString()}</span>
-                        <span>💬 Profile ID: ${profile.id.slice(0, 8)}...</span>
-                    </div>
-                </div>
-                <a href="${basePath}send.html?id=${profile.id}" class="bg-green-500 text-white px-6 py-3 rounded-md hover:bg-green-600 font-medium">
-                    Send Message →
-                </a>
-            </div>
-        `).join('');
-    }
-}
-
-// Chat functionality for bidirectional conversations
-async function initChat(conversationId) {
-    try {
-        // Load the conversation
-        const querySnapshot = await db.collection('messages').where('conversationId', '==', conversationId).get();
-        
-        if (querySnapshot.empty) {
-            document.getElementById('chatContainer').innerHTML = `
-                <div class="text-center py-16">
-                    <div class="text-red-500 text-6xl mb-4">❌</div>
-                    <h3 class="text-xl font-medium text-gray-600 mb-2">Conversation not found</h3>
-                    <p class="text-gray-500">The conversation link may be invalid or expired.</p>
-                </div>
-            `;
-            return;
-        }
-        
-        let messageData = null;
-        querySnapshot.forEach(doc => {
-            messageData = { id: doc.id, ...doc.data() };
-        });
-        
-        if (messageData) {
-            displayChatConversation(messageData);
-            
-            // Listen for real-time updates
-            db.collection('messages').doc(messageData.id).onSnapshot(doc => {
-                if (doc.exists) {
-                    displayChatConversation({ id: doc.id, ...doc.data() });
-                }
-            });
-        }
-        
-    } catch (error) {
-        console.error('Error loading chat:', error);
-        document.getElementById('chatContainer').innerHTML = `
-            <div class="text-center py-16">
-                <div class="text-red-500 text-6xl mb-4">❌</div>
-                <h3 class="text-xl font-medium text-gray-600 mb-2">Error loading conversation</h3>
-                <p class="text-gray-500">Please try again later.</p>
-            </div>
-        `;
-    }
-}
-
-function displayChatConversation(messageData) {
-    const container = document.getElementById('chatContainer');
-    
-    container.innerHTML = `
-        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-xl font-bold text-gray-800">Anonymous Conversation</h2>
-                <span class="text-sm text-gray-500">
-                    Started ${messageData.timestamp?.toDate?.()?.toLocaleDateString()}
-                </span>
-            </div>
-            
-            <div class="space-y-4">
-                <!-- Original Message -->
-                <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
-                    <div class="flex justify-between items-start mb-2">
-                        <span class="font-medium text-blue-700">Anonymous Sender</span>
-                        <span class="text-xs text-blue-600">${messageData.timestamp?.toDate?.()?.toLocaleString()}</span>
-                    </div>
-                    <p class="text-gray-800">${messageData.content}</p>
-                </div>
-                
-                <!-- Responses -->
-                <div id="chatResponses" class="space-y-3">
-                    ${messageData.responses ? messageData.responses.map(response => `
-                        <div class="${response.isOwner ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="font-medium ${response.isOwner ? 'text-green-700' : 'text-gray-700'}">
-                                    ${response.isOwner ? 'Profile Owner' : 'Anonymous Sender'}
-                                </span>
-                                <span class="text-xs ${response.isOwner ? 'text-green-600' : 'text-gray-600'}">
-                                    ${response.timestamp?.toDate?.()?.toLocaleString()}
-                                </span>
-                            </div>
-                            <p class="text-gray-800">${response.content}</p>
-                        </div>
-                    `).join('') : ''}
-                </div>
-            </div>
-        </div>
-        
-        <!-- Reply Form -->
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <h3 class="text-lg font-medium mb-4">Continue the conversation</h3>
-            <form id="chatReplyForm">
-                <textarea id="chatReplyText" placeholder="Write your reply..." class="w-full p-3 border border-gray-300 rounded-md mb-3 h-24 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required></textarea>
-                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600">Send Reply</button>
-            </form>
-        </div>
-    `;
-    
-    // Handle chat replies
-    document.getElementById('chatReplyForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const replyText = document.getElementById('chatReplyText').value.trim();
-        if (!replyText) return;
-        
-        try {
-            const messageRef = db.collection('messages').doc(messageData.id);
-            
-            await messageRef.update({
-                responses: [...(messageData.responses || []), {
-                    content: replyText,
-                    timestamp: new Date(),
-                    isOwner: false  // This is the anonymous sender replying
-                }]
-            });
-            
-            document.getElementById('chatReplyText').value = '';
-            
-        } catch (error) {
-            console.error('Error sending reply:', error);
-            alert('Error sending reply. Please try again.');
-        }
-    });
-}
+        const messageRef = db.collection('messages').doc(message
