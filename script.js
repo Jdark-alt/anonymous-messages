@@ -43,10 +43,12 @@ if (document.getElementById('profileForm')) {
                 messageCount: 0
             });
             
-            // Show success message
-            const profileUrl = `${window.location.origin}/send.html?id=${docRef.id}`;
+            // Show success message with CORRECTED URLs
+            const profileUrl = `${window.location.origin}${window.location.pathname.replace('index.html', '')}send.html?id=${docRef.id}`;
+            const dashboardUrl = `${window.location.origin}${window.location.pathname.replace('index.html', '')}dashboard.html?id=${docRef.id}`;
+            
             document.getElementById('profileUrl').value = profileUrl;
-            document.getElementById('dashboardLink').href = `dashboard.html?id=${docRef.id}`;
+            document.getElementById('dashboardLink').href = dashboardUrl;
             
             document.getElementById('createForm').style.display = 'none';
             document.getElementById('successMessage').style.display = 'block';
@@ -56,6 +58,77 @@ if (document.getElementById('profileForm')) {
             alert('Error creating profile. Please try again.');
             createBtn.textContent = 'Create Profile';
             createBtn.disabled = false;
+        }
+    });
+}
+
+// Quick Login functionality
+if (document.getElementById('quickLoginForm')) {
+    document.getElementById('quickLoginForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const profileId = document.getElementById('existingProfileId').value.trim();
+        const passcode = document.getElementById('existingPasscode').value;
+        const loginBtn = document.getElementById('loginBtn');
+        
+        loginBtn.textContent = 'Checking...';
+        loginBtn.disabled = true;
+        
+        try {
+            const doc = await db.collection('profiles').doc(profileId).get();
+            
+            if (doc.exists && doc.data().passcode === passcode) {
+                // Redirect to dashboard
+                window.location.href = `dashboard.html?id=${profileId}`;
+            } else {
+                alert('Invalid Profile ID or passcode. Please check your details.');
+            }
+            
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error accessing profile. Please check your Profile ID.');
+        }
+        
+        loginBtn.textContent = 'Access My Dashboard';
+        loginBtn.disabled = false;
+    });
+}
+
+// Profile ID Finder functionality
+function showProfileIdFinder() {
+    document.getElementById('profileIdModal').style.display = 'flex';
+}
+
+function hideProfileIdFinder() {
+    document.getElementById('profileIdModal').style.display = 'none';
+    document.getElementById('foundProfile').style.display = 'none';
+    document.getElementById('findProfileForm').reset();
+}
+
+if (document.getElementById('findProfileForm')) {
+    document.getElementById('findProfileForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const displayName = document.getElementById('findDisplayName').value;
+        const passcode = document.getElementById('findPasscode').value;
+        
+        try {
+            const querySnapshot = await db.collection('profiles')
+                .where('displayName', '==', displayName)
+                .where('passcode', '==', passcode)
+                .get();
+            
+            if (!querySnapshot.empty) {
+                const doc = querySnapshot.docs[0];
+                document.getElementById('foundProfileId').value = doc.id;
+                document.getElementById('foundProfile').style.display = 'block';
+            } else {
+                alert('No profile found with those credentials.');
+            }
+            
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error searching for profile.');
         }
     });
 }
@@ -91,16 +164,54 @@ async function loadProfileForSending(profileId) {
                 sendBtn.disabled = true;
                 
                 try {
-                    await db.collection('messages').add({
+                    // Generate a unique conversation ID for bidirectional chat
+                    const conversationId = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    
+                    // Create the message with conversation tracking
+                    const docRef = await db.collection('messages').add({
                         profileId: profileId,
+                        conversationId: conversationId,
                         content: content,
                         timestamp: new Date(),
                         isAnonymous: true,
-                        responses: []
+                        responses: [],
+                        senderCanReply: true
                     });
                     
+                    // Show success with conversation link
                     document.getElementById('messageForm').style.display = 'none';
                     document.getElementById('sentMessage').style.display = 'block';
+                    
+                    // Add the conversation link
+                    const chatLink = `${window.location.origin}${window.location.pathname.replace('send.html', '')}chat.html?conv=${conversationId}`;
+                    
+                    document.getElementById('sentMessage').innerHTML = `
+                        <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-6">
+                            <h3 class="text-lg font-semibold">Message Sent!</h3>
+                            <p class="text-sm mt-1">Your anonymous message has been delivered.</p>
+                        </div>
+                        
+                        <div class="bg-blue-50 border border-blue-200 p-4 rounded mb-6">
+                            <p class="text-sm text-blue-700 mb-2">💬 <strong>Want to see if they reply?</strong></p>
+                            <p class="text-xs text-blue-600 mb-3">Bookmark this link to check for replies:</p>
+                            <div class="flex">
+                                <input type="text" id="chatLink" value="${chatLink}" readonly class="flex-1 p-2 bg-white border border-gray-300 rounded-l-md text-xs">
+                                <button onclick="copyChatLink()" class="bg-blue-500 text-white px-3 py-1 rounded-r-md hover:bg-blue-600 text-xs">Copy</button>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-3">
+                            <a href="${chatLink}" class="block w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 text-center">
+                                Go to Conversation
+                            </a>
+                            <button onclick="sendAnother()" class="w-full bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600">
+                                Send Another Message
+                            </button>
+                            <a href="search.html" class="block w-full bg-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-400 text-center">
+                                Find Other Profiles
+                            </a>
+                        </div>
+                    `;
                     
                 } catch (error) {
                     console.error('Error:', error);
@@ -119,6 +230,14 @@ async function loadProfileForSending(profileId) {
         document.getElementById('loadingMessage').style.display = 'none';
         document.getElementById('errorMessage').style.display = 'block';
     }
+}
+
+// Copy chat link function
+function copyChatLink() {
+    const chatLink = document.getElementById('chatLink');
+    chatLink.select();
+    document.execCommand('copy');
+    alert('Conversation link copied! Bookmark this to check for replies.');
 }
 
 // Send another message function
@@ -151,7 +270,10 @@ async function initDashboard(profileId) {
                 document.getElementById('loginForm').style.display = 'none';
                 document.getElementById('dashboardContent').style.display = 'block';
                 document.getElementById('profileDisplayName').textContent = profile.displayName;
-                document.getElementById('shareUrl').value = `${window.location.origin}/send.html?id=${profileId}`;
+                
+                // FIXED: Correct URL generation
+                const shareUrl = `${window.location.origin}${window.location.pathname.replace('dashboard.html', '')}send.html?id=${profileId}`;
+                document.getElementById('shareUrl').value = shareUrl;
                 
                 // Load messages
                 loadMessages(profileId);
@@ -207,6 +329,10 @@ function displayMessages(messages) {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'bg-white rounded-lg shadow-md p-6 mb-4';
         
+        const chatLink = message.conversationId ? 
+            `${window.location.origin}${window.location.pathname.replace('dashboard.html', '')}chat.html?conv=${message.conversationId}` : 
+            null;
+        
         messageDiv.innerHTML = `
             <div class="flex justify-between items-start mb-4">
                 <div class="flex items-center space-x-2">
@@ -215,7 +341,10 @@ function displayMessages(messages) {
                     </div>
                     <span class="font-medium text-gray-600">Anonymous User</span>
                 </div>
-                <span class="text-xs text-gray-400">${message.timestamp?.toDate?.()?.toLocaleString() || 'Just now'}</span>
+                <div class="text-right">
+                    <span class="text-xs text-gray-400 block">${message.timestamp?.toDate?.()?.toLocaleString() || 'Just now'}</span>
+                    ${chatLink ? `<a href="${chatLink}" class="text-xs text-blue-500 hover:text-blue-700">View Full Chat</a>` : ''}
+                </div>
             </div>
             
             <p class="text-gray-800 mb-4 text-lg">${message.content}</p>
@@ -341,6 +470,10 @@ function displaySearchResults(results, searchTerm) {
         noResults.style.display = 'block';
     } else {
         noResults.style.display = 'none';
+        
+        // FIXED: Correct URL generation for search results
+        const basePath = window.location.pathname.replace('search.html', '');
+        
         container.innerHTML = results.map(profile => `
             <div class="bg-white rounded-lg shadow-md p-6 flex justify-between items-center mb-4">
                 <div>
@@ -350,10 +483,133 @@ function displaySearchResults(results, searchTerm) {
                         <span>💬 Profile ID: ${profile.id.slice(0, 8)}...</span>
                     </div>
                 </div>
-                <a href="send.html?id=${profile.id}" class="bg-green-500 text-white px-6 py-3 rounded-md hover:bg-green-600 font-medium">
+                <a href="${basePath}send.html?id=${profile.id}" class="bg-green-500 text-white px-6 py-3 rounded-md hover:bg-green-600 font-medium">
                     Send Message →
                 </a>
             </div>
         `).join('');
     }
+}
+
+// Chat functionality for bidirectional conversations
+async function initChat(conversationId) {
+    try {
+        // Load the conversation
+        const querySnapshot = await db.collection('messages').where('conversationId', '==', conversationId).get();
+        
+        if (querySnapshot.empty) {
+            document.getElementById('chatContainer').innerHTML = `
+                <div class="text-center py-16">
+                    <div class="text-red-500 text-6xl mb-4">❌</div>
+                    <h3 class="text-xl font-medium text-gray-600 mb-2">Conversation not found</h3>
+                    <p class="text-gray-500">The conversation link may be invalid or expired.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        let messageData = null;
+        querySnapshot.forEach(doc => {
+            messageData = { id: doc.id, ...doc.data() };
+        });
+        
+        if (messageData) {
+            displayChatConversation(messageData);
+            
+            // Listen for real-time updates
+            db.collection('messages').doc(messageData.id).onSnapshot(doc => {
+                if (doc.exists) {
+                    displayChatConversation({ id: doc.id, ...doc.data() });
+                }
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error loading chat:', error);
+        document.getElementById('chatContainer').innerHTML = `
+            <div class="text-center py-16">
+                <div class="text-red-500 text-6xl mb-4">❌</div>
+                <h3 class="text-xl font-medium text-gray-600 mb-2">Error loading conversation</h3>
+                <p class="text-gray-500">Please try again later.</p>
+            </div>
+        `;
+    }
+}
+
+function displayChatConversation(messageData) {
+    const container = document.getElementById('chatContainer');
+    
+    container.innerHTML = `
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Anonymous Conversation</h2>
+                <span class="text-sm text-gray-500">
+                    Started ${messageData.timestamp?.toDate?.()?.toLocaleDateString()}
+                </span>
+            </div>
+            
+            <div class="space-y-4">
+                <!-- Original Message -->
+                <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="font-medium text-blue-700">Anonymous Sender</span>
+                        <span class="text-xs text-blue-600">${messageData.timestamp?.toDate?.()?.toLocaleString()}</span>
+                    </div>
+                    <p class="text-gray-800">${messageData.content}</p>
+                </div>
+                
+                <!-- Responses -->
+                <div id="chatResponses" class="space-y-3">
+                    ${messageData.responses ? messageData.responses.map(response => `
+                        <div class="${response.isOwner ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
+                            <div class="flex justify-between items-start mb-2">
+                                <span class="font-medium ${response.isOwner ? 'text-green-700' : 'text-gray-700'}">
+                                    ${response.isOwner ? 'Profile Owner' : 'Anonymous Sender'}
+                                </span>
+                                <span class="text-xs ${response.isOwner ? 'text-green-600' : 'text-gray-600'}">
+                                    ${response.timestamp?.toDate?.()?.toLocaleString()}
+                                </span>
+                            </div>
+                            <p class="text-gray-800">${response.content}</p>
+                        </div>
+                    `).join('') : ''}
+                </div>
+            </div>
+        </div>
+        
+        <!-- Reply Form -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="text-lg font-medium mb-4">Continue the conversation</h3>
+            <form id="chatReplyForm">
+                <textarea id="chatReplyText" placeholder="Write your reply..." class="w-full p-3 border border-gray-300 rounded-md mb-3 h-24 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required></textarea>
+                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600">Send Reply</button>
+            </form>
+        </div>
+    `;
+    
+    // Handle chat replies
+    document.getElementById('chatReplyForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const replyText = document.getElementById('chatReplyText').value.trim();
+        if (!replyText) return;
+        
+        try {
+            const messageRef = db.collection('messages').doc(messageData.id);
+            
+            await messageRef.update({
+                responses: [...(messageData.responses || []), {
+                    content: replyText,
+                    timestamp: new Date(),
+                    isOwner: false  // This is the anonymous sender replying
+                }]
+            });
+            
+            document.getElementById('chatReplyText').value = '';
+            
+        } catch (error) {
+            console.error('Error sending reply:', error);
+            alert('Error sending reply. Please try again.');
+        }
+    });
 }
