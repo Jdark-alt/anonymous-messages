@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat - Anonymous Messages</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-6xl mx-auto px-4 py-3">
+            <div class="flex justify-between items-center">
+                <a href="index.html" class="text-xl font-bold text-blue-600">Anonymous Messages</a>
+                <div class="space-x-4">
+                    <a href="index.html" class="text-gray-600 hover:text-blue-600">Create Profile</a>
+                    <a href="search.html" class="text-gray-600 hover:text-blue-600">Find Profiles</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-4xl mx-auto mt-10 p-6">
+        <div id="chatContainer">
+            <div class="text-center py-10">
+                <div class="text-gray-500">Loading conversation...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const conversationId = urlParams.get('conv');
+            
+            if (conversationId) {
+                initChat(conversationId);
+            } else {
+                document.getElementById('chatContainer').innerHTML = `
+                    <div class="text-center py-16">
+                        <div class="text-red-500 text-6xl mb-4">❌</div>
+                        <h3 class="text-xl font-medium text-gray-600 mb-2">Invalid conversation link</h3>
+                        <p class="text-gray-500">Please check the URL and try again.</p>
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
