@@ -1,12 +1,11 @@
 // Replace with YOUR Firebase config
 const firebaseConfig = {
-    // PASTE YOUR FIREBASE CONFIG HERE
-    apiKey: "your-api-key",
-    authDomain: "your-project.firebaseapp.com",
-    projectId: "your-project-id",
-    storageBucket: "your-project.appspot.com",
-    messagingSenderId: "123456789",
-    appId: "your-app-id"
+  apiKey: "AIzaSyCl6BdJL3vEJP1PHfxSbDWNll972p_qn4U",
+  authDomain: "anonymous-messages-app-215dc.firebaseapp.com",
+  projectId: "anonymous-messages-app-215dc",
+  storageBucket: "anonymous-messages-app-215dc.firebasestorage.app",
+  messagingSenderId: "369821019026",
+  appId: "1:369821019026:web:350f0819d5390429246f4b"
 };
 
 // Initialize Firebase
