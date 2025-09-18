@@ -177,17 +177,16 @@ async function loadProfileForSending(profileId) {
                     // Generate unique conversation ID
                     const conversationId = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                     
-                    // FIXED: Add message with proper timestamp and structure
+                    // FIXED: Add message with proper structure
                     const docRef = await db.collection('messages').add({
                         profileId: profileId,
                         conversationId: conversationId,
                         content: content,
                         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp(), // Fallback for sorting
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         isAnonymous: true,
-                        responses: [],
-                        senderCanReply: true,
-                        messageType: 'initial' // Help identify message types
+                        messageType: 'initial',
+                        replyCount: 0 // Track reply count separately
                     });
                     
                     console.log('Message sent successfully:', docRef.id);
@@ -272,8 +271,8 @@ async function initDashboard(profileId) {
                 const shareUrl = `${window.location.origin}${basePath}/send.html?id=${profileId}`;
                 document.getElementById('shareUrl').value = shareUrl;
                 
-                // FIXED: Load messages with improved error handling
-                loadMessages(profileId);
+                // FIXED: Load messages with subcollection replies
+                loadMessagesWithReplies(profileId);
                 
             } else {
                 alert('Invalid passcode. Please try again.');
@@ -290,40 +289,60 @@ async function initDashboard(profileId) {
     });
 }
 
-// FIXED: Load messages for dashboard with better error handling
-function loadMessages(profileId) {
-    console.log('Loading messages for profile:', profileId);
+// FIXED: Load messages with subcollection replies
+function loadMessagesWithReplies(profileId) {
+    console.log('Loading messages with replies for profile:', profileId);
     
-    // First, try to get messages without ordering to avoid index issues
     db.collection('messages')
         .where('profileId', '==', profileId)
-        .onSnapshot(function(querySnapshot) {
+        .onSnapshot(async function(querySnapshot) {
             console.log('Query snapshot received, size:', querySnapshot.size);
             
             const messages = [];
-            querySnapshot.forEach(function(doc) {
-                const data = doc.data();
-                console.log('Message found:', doc.id, data);
-                messages.push({ 
-                    id: doc.id, 
-                    ...data,
-                    // Handle different timestamp formats
-                    timestamp: data.timestamp || data.createdAt || new Date(),
-                    sortTime: data.timestamp?.toDate?.() || data.createdAt?.toDate?.() || new Date()
-                });
+            
+            // Process each message and fetch its replies
+            const messagePromises = querySnapshot.docs.map(async (doc) => {
+                const messageData = { id: doc.id, ...doc.data() };
+                
+                // Fetch replies from subcollection
+                try {
+                    const repliesSnapshot = await db.collection('messages')
+                        .doc(doc.id)
+                        .collection('replies')
+                        .orderBy('timestamp', 'asc')
+                        .get();
+                    
+                    messageData.replies = [];
+                    repliesSnapshot.forEach(replyDoc => {
+                        messageData.replies.push({
+                            id: replyDoc.id,
+                            ...replyDoc.data()
+                        });
+                    });
+                    
+                    console.log('Message with replies loaded:', messageData.id, 'replies:', messageData.replies.length);
+                } catch (replyError) {
+                    console.log('Error loading replies for message', doc.id, replyError);
+                    messageData.replies = [];
+                }
+                
+                return messageData;
             });
             
-            // Sort messages manually by timestamp (newest first)
-            messages.sort((a, b) => {
-                const timeA = a.sortTime instanceof Date ? a.sortTime : new Date(a.sortTime);
-                const timeB = b.sortTime instanceof Date ? b.sortTime : new Date(b.sortTime);
+            // Wait for all messages and their replies to load
+            const loadedMessages = await Promise.all(messagePromises);
+            
+            // Sort messages by timestamp
+            loadedMessages.sort((a, b) => {
+                const timeA = a.timestamp?.toDate?.() || a.createdAt?.toDate?.() || new Date();
+                const timeB = b.timestamp?.toDate?.() || b.createdAt?.toDate?.() || new Date();
                 return timeB - timeA;
             });
             
-            console.log('Messages loaded and sorted:', messages.length);
-            document.getElementById('messageCount').textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
+            console.log('All messages loaded:', loadedMessages.length);
+            document.getElementById('messageCount').textContent = `${loadedMessages.length} message${loadedMessages.length !== 1 ? 's' : ''}`;
             
-            if (messages.length === 0) {
+            if (loadedMessages.length === 0) {
                 document.getElementById('messagesContainer').innerHTML = `
                     <div class="text-center py-16 bg-white rounded-2xl shadow-lg">
                         <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -334,49 +353,15 @@ function loadMessages(profileId) {
                     </div>
                 `;
             } else {
-                displayMessages(messages);
+                displayMessagesWithReplies(loadedMessages);
             }
         }, function(error) {
             console.error('Error loading messages:', error);
-            
-            // Fallback: try to load messages without real-time listener
-            db.collection('messages')
-                .where('profileId', '==', profileId)
-                .get()
-                .then(function(querySnapshot) {
-                    console.log('Fallback query successful, size:', querySnapshot.size);
-                    const messages = [];
-                    querySnapshot.forEach(function(doc) {
-                        const data = doc.data();
-                        messages.push({ 
-                            id: doc.id, 
-                            ...data,
-                            timestamp: data.timestamp || data.createdAt || new Date()
-                        });
-                    });
-                    
-                    if (messages.length > 0) {
-                        displayMessages(messages);
-                        document.getElementById('messageCount').textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
-                    }
-                })
-                .catch(function(fallbackError) {
-                    console.error('Fallback query also failed:', fallbackError);
-                    document.getElementById('messagesContainer').innerHTML = `
-                        <div class="text-center py-16 bg-white rounded-2xl shadow-lg">
-                            <div class="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                                <i class="fas fa-exclamation-triangle text-3xl text-red-500"></i>
-                            </div>
-                            <h3 class="text-xl font-medium text-gray-600 mb-2">Error loading messages</h3>
-                            <p class="text-gray-500">Please refresh the page or check your connection.</p>
-                        </div>
-                    `;
-                });
         });
 }
 
-// FIXED: Display messages with better error handling
-function displayMessages(messages) {
+// FIXED: Display messages with replies from subcollections
+function displayMessagesWithReplies(messages) {
     const container = document.getElementById('messagesContainer');
     if (!container) {
         console.error('Messages container not found');
@@ -432,38 +417,38 @@ function displayMessages(messages) {
                 <p class="text-gray-800 text-lg leading-relaxed">${message.content || 'No content'}</p>
             </div>
             
-            ${message.responses && message.responses.length > 0 ? `
+            ${message.replies && message.replies.length > 0 ? `
                 <div class="bg-blue-50 rounded-xl p-4 mb-4 border-l-4 border-blue-400">
                     <h4 class="text-sm font-semibold mb-3 text-blue-800 flex items-center">
                         <i class="fas fa-comments mr-2"></i>
-                        Conversation (${message.responses.length} ${message.responses.length === 1 ? 'reply' : 'replies'})
+                        Conversation (${message.replies.length} ${message.replies.length === 1 ? 'reply' : 'replies'})
                     </h4>
                     <div class="space-y-3">
-                        ${message.responses.slice(-3).map(response => {
-                            let responseTime = 'Just now';
+                        ${message.replies.slice(-3).map(reply => {
+                            let replyTime = 'Just now';
                             try {
-                                if (response.timestamp && response.timestamp.toDate) {
-                                    responseTime = response.timestamp.toDate().toLocaleString();
+                                if (reply.timestamp && reply.timestamp.toDate) {
+                                    replyTime = reply.timestamp.toDate().toLocaleString();
                                 }
                             } catch (e) {
-                                console.log('Error formatting response timestamp:', e);
+                                console.log('Error formatting reply timestamp:', e);
                             }
                             
                             return `
-                            <div class="${response.isOwner ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
+                            <div class="${reply.sender === 'owner' ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
                                 <div class="flex justify-between text-xs text-gray-600 mb-1">
-                                    <span class="font-medium">${response.isOwner ? 'You' : 'Anonymous'}</span>
-                                    <span>${responseTime}</span>
+                                    <span class="font-medium">${reply.sender === 'owner' ? 'You' : 'Anonymous'}</span>
+                                    <span>${replyTime}</span>
                                 </div>
-                                <p class="text-gray-800">${response.content || 'No content'}</p>
+                                <p class="text-gray-800">${reply.content || 'No content'}</p>
                             </div>
                         `;
                         }).join('')}
                     </div>
-                    ${message.responses.length > 3 ? `
+                    ${message.replies.length > 3 ? `
                         <div class="text-center mt-3">
                             <a href="${chatLink}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                                View all ${message.responses.length} replies →
+                                View all ${message.replies.length} replies →
                             </a>
                         </div>
                     ` : ''}
@@ -508,28 +493,31 @@ function cancelReply(messageId) {
     document.getElementById(`replyText-${messageId}`).value = '';
 }
 
+// FIXED: Send reply using subcollection (solves the serverTimestamp error)
 async function sendReply(messageId) {
     const replyText = document.getElementById(`replyText-${messageId}`).value.trim();
     if (!replyText) return;
     
     try {
-        const messageRef = db.collection('messages').doc(messageId);
-        const messageDoc = await messageRef.get();
+        console.log('Sending reply to message:', messageId);
         
-        if (!messageDoc.exists) {
-            alert('Message not found');
-            return;
-        }
-        
-        const currentMessage = messageDoc.data();
-        
-        await messageRef.update({
-            responses: [...(currentMessage.responses || []), {
+        // FIXED: Save reply as document in subcollection instead of array
+        await db.collection('messages')
+            .doc(messageId)
+            .collection('replies')
+            .add({
                 content: replyText,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                isOwner: true
-            }]
-        });
+                sender: 'owner' // Profile owner replying
+            });
+        
+        // Update reply count in main message document
+        await db.collection('messages')
+            .doc(messageId)
+            .update({
+                replyCount: firebase.firestore.FieldValue.increment(1),
+                lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
         
         console.log('Reply sent successfully');
         cancelReply(messageId);
@@ -611,7 +599,7 @@ function displaySearchResults(results, searchTerm) {
     }
 }
 
-// Chat functionality for bidirectional conversations
+// FIXED: Chat functionality with subcollection replies
 async function initChat(conversationId) {
     try {
         console.log('Loading chat for conversation:', conversationId);
@@ -634,14 +622,38 @@ async function initChat(conversationId) {
         });
         
         if (messageData) {
+            // Load replies from subcollection
+            const repliesSnapshot = await db.collection('messages')
+                .doc(messageData.id)
+                .collection('replies')
+                .orderBy('timestamp', 'asc')
+                .get();
+            
+            messageData.replies = [];
+            repliesSnapshot.forEach(replyDoc => {
+                messageData.replies.push({
+                    id: replyDoc.id,
+                    ...replyDoc.data()
+                });
+            });
+            
             displayChatConversation(messageData);
             
-            // Listen for real-time updates
-            db.collection('messages').doc(messageData.id).onSnapshot(doc => {
-                if (doc.exists) {
-                    displayChatConversation({ id: doc.id, ...doc.data() });
-                }
-            });
+            // Listen for new replies in real-time
+            db.collection('messages')
+                .doc(messageData.id)
+                .collection('replies')
+                .orderBy('timestamp', 'asc')
+                .onSnapshot(repliesSnapshot => {
+                    messageData.replies = [];
+                    repliesSnapshot.forEach(replyDoc => {
+                        messageData.replies.push({
+                            id: replyDoc.id,
+                            ...replyDoc.data()
+                        });
+                    });
+                    displayChatConversation(messageData);
+                });
         }
         
     } catch (error) {
@@ -685,29 +697,29 @@ function displayChatConversation(messageData) {
                     <p class="text-gray-800">${messageData.content || 'No content'}</p>
                 </div>
                 
-                <!-- Responses -->
+                <!-- Replies from subcollection -->
                 <div id="chatResponses" class="space-y-3">
-                    ${messageData.responses ? messageData.responses.map(response => {
-                        let responseTime = 'Just now';
+                    ${messageData.replies ? messageData.replies.map(reply => {
+                        let replyTime = 'Just now';
                         try {
-                            if (response.timestamp && response.timestamp.toDate) {
-                                responseTime = response.timestamp.toDate().toLocaleString();
+                            if (reply.timestamp && reply.timestamp.toDate) {
+                                replyTime = reply.timestamp.toDate().toLocaleString();
                             }
                         } catch (e) {
-                            console.log('Error formatting response timestamp:', e);
+                            console.log('Error formatting reply timestamp:', e);
                         }
                         
                         return `
-                        <div class="${response.isOwner ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
+                        <div class="${reply.sender === 'owner' ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
                             <div class="flex justify-between items-start mb-2">
-                                <span class="font-medium ${response.isOwner ? 'text-green-700' : 'text-gray-700'}">
-                                    ${response.isOwner ? 'Profile Owner' : 'Anonymous Sender'}
+                                <span class="font-medium ${reply.sender === 'owner' ? 'text-green-700' : 'text-gray-700'}">
+                                    ${reply.sender === 'owner' ? 'Profile Owner' : 'Anonymous Sender'}
                                 </span>
-                                <span class="text-xs ${response.isOwner ? 'text-green-600' : 'text-gray-600'}">
-                                    ${responseTime}
+                                <span class="text-xs ${reply.sender === 'owner' ? 'text-green-600' : 'text-gray-600'}">
+                                    ${replyTime}
                                 </span>
                             </div>
-                            <p class="text-gray-800">${response.content || 'No content'}</p>
+                            <p class="text-gray-800">${reply.content || 'No content'}</p>
                         </div>
                     `;
                     }).join('') : ''}
@@ -733,15 +745,23 @@ function displayChatConversation(messageData) {
         if (!replyText) return;
         
         try {
-            const messageRef = db.collection('messages').doc(messageData.id);
-            
-            await messageRef.update({
-                responses: [...(messageData.responses || []), {
+            // FIXED: Add reply to subcollection
+            await db.collection('messages')
+                .doc(messageData.id)
+                .collection('replies')
+                .add({
                     content: replyText,
                     timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    isOwner: false  // This is the anonymous sender replying
-                }]
-            });
+                    sender: 'anonymous' // Anonymous sender replying
+                });
+            
+            // Update reply count
+            await db.collection('messages')
+                .doc(messageData.id)
+                .update({
+                    replyCount: firebase.firestore.FieldValue.increment(1),
+                    lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
             
             document.getElementById('chatReplyText').value = '';
             
@@ -751,4 +771,5 @@ function displayChatConversation(messageData) {
         }
     });
 }
+
 
