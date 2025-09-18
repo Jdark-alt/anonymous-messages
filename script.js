@@ -12,6 +12,9 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+// Debug logging
+console.log('Firebase initialized:', firebase.apps.length > 0);
+
 // Create Profile functionality
 if (document.getElementById('profileForm')) {
     document.getElementById('profileForm').addEventListener('submit', async function(e) {
@@ -39,9 +42,11 @@ if (document.getElementById('profileForm')) {
             const docRef = await db.collection('profiles').add({
                 displayName: displayName,
                 passcode: passcode,
-                createdAt: new Date(),
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 messageCount: 0
             });
+            
+            console.log('Profile created with ID:', docRef.id);
             
             // Show success message with CORRECTED URLs
             const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
@@ -55,8 +60,6 @@ if (document.getElementById('profileForm')) {
             
             document.getElementById('createForm').style.display = 'none';
             document.getElementById('successMessage').style.display = 'block';
-            
-            console.log('Profile created successfully!', docRef.id);
             
         } catch (error) {
             console.error('Error creating profile:', error);
@@ -83,7 +86,6 @@ if (document.getElementById('quickLoginForm')) {
             const doc = await db.collection('profiles').doc(profileId).get();
             
             if (doc.exists && doc.data().passcode === passcode) {
-                // Redirect to dashboard
                 const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
                 window.location.href = `${basePath}/dashboard.html?id=${profileId}`;
             } else {
@@ -175,15 +177,17 @@ async function loadProfileForSending(profileId) {
                     // Generate unique conversation ID
                     const conversationId = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                     
-                    // Add message to Firestore
+                    // FIXED: Add message with proper timestamp and structure
                     const docRef = await db.collection('messages').add({
                         profileId: profileId,
                         conversationId: conversationId,
                         content: content,
                         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(), // Fallback for sorting
                         isAnonymous: true,
                         responses: [],
-                        senderCanReply: true
+                        senderCanReply: true,
+                        messageType: 'initial' // Help identify message types
                     });
                     
                     console.log('Message sent successfully:', docRef.id);
@@ -240,6 +244,8 @@ function sendAnother() {
 
 // Dashboard functionality
 async function initDashboard(profileId) {
+    console.log('Initializing dashboard for profile:', profileId);
+    
     document.getElementById('authForm').addEventListener('submit', async function(e) {
         e.preventDefault();
         
@@ -254,6 +260,7 @@ async function initDashboard(profileId) {
             
             if (doc.exists && doc.data().passcode === passcode) {
                 const profile = doc.data();
+                console.log('Authentication successful for:', profile.displayName);
                 
                 // Show dashboard
                 document.getElementById('loginForm').style.display = 'none';
@@ -265,7 +272,7 @@ async function initDashboard(profileId) {
                 const shareUrl = `${window.location.origin}${basePath}/send.html?id=${profileId}`;
                 document.getElementById('shareUrl').value = shareUrl;
                 
-                // Load messages with real-time updates
+                // FIXED: Load messages with improved error handling
                 loadMessages(profileId);
                 
             } else {
@@ -283,26 +290,37 @@ async function initDashboard(profileId) {
     });
 }
 
-// Load messages for dashboard
+// FIXED: Load messages for dashboard with better error handling
 function loadMessages(profileId) {
     console.log('Loading messages for profile:', profileId);
     
-    // Real-time listener for messages
+    // First, try to get messages without ordering to avoid index issues
     db.collection('messages')
         .where('profileId', '==', profileId)
-        .orderBy('timestamp', 'desc')
         .onSnapshot(function(querySnapshot) {
+            console.log('Query snapshot received, size:', querySnapshot.size);
+            
             const messages = [];
             querySnapshot.forEach(function(doc) {
                 const data = doc.data();
+                console.log('Message found:', doc.id, data);
                 messages.push({ 
                     id: doc.id, 
                     ...data,
-                    timestamp: data.timestamp || new Date()
+                    // Handle different timestamp formats
+                    timestamp: data.timestamp || data.createdAt || new Date(),
+                    sortTime: data.timestamp?.toDate?.() || data.createdAt?.toDate?.() || new Date()
                 });
             });
             
-            console.log('Messages loaded:', messages.length);
+            // Sort messages manually by timestamp (newest first)
+            messages.sort((a, b) => {
+                const timeA = a.sortTime instanceof Date ? a.sortTime : new Date(a.sortTime);
+                const timeB = b.sortTime instanceof Date ? b.sortTime : new Date(b.sortTime);
+                return timeB - timeA;
+            });
+            
+            console.log('Messages loaded and sorted:', messages.length);
             document.getElementById('messageCount').textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
             
             if (messages.length === 0) {
@@ -320,13 +338,53 @@ function loadMessages(profileId) {
             }
         }, function(error) {
             console.error('Error loading messages:', error);
+            
+            // Fallback: try to load messages without real-time listener
+            db.collection('messages')
+                .where('profileId', '==', profileId)
+                .get()
+                .then(function(querySnapshot) {
+                    console.log('Fallback query successful, size:', querySnapshot.size);
+                    const messages = [];
+                    querySnapshot.forEach(function(doc) {
+                        const data = doc.data();
+                        messages.push({ 
+                            id: doc.id, 
+                            ...data,
+                            timestamp: data.timestamp || data.createdAt || new Date()
+                        });
+                    });
+                    
+                    if (messages.length > 0) {
+                        displayMessages(messages);
+                        document.getElementById('messageCount').textContent = `${messages.length} message${messages.length !== 1 ? 's' : ''}`;
+                    }
+                })
+                .catch(function(fallbackError) {
+                    console.error('Fallback query also failed:', fallbackError);
+                    document.getElementById('messagesContainer').innerHTML = `
+                        <div class="text-center py-16 bg-white rounded-2xl shadow-lg">
+                            <div class="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                <i class="fas fa-exclamation-triangle text-3xl text-red-500"></i>
+                            </div>
+                            <h3 class="text-xl font-medium text-gray-600 mb-2">Error loading messages</h3>
+                            <p class="text-gray-500">Please refresh the page or check your connection.</p>
+                        </div>
+                    `;
+                });
         });
 }
 
-// Display messages
+// FIXED: Display messages with better error handling
 function displayMessages(messages) {
     const container = document.getElementById('messagesContainer');
+    if (!container) {
+        console.error('Messages container not found');
+        return;
+    }
+    
     container.innerHTML = '';
+    console.log('Displaying', messages.length, 'messages');
     
     messages.forEach((message, index) => {
         const messageDiv = document.createElement('div');
@@ -337,6 +395,18 @@ function displayMessages(messages) {
             `${window.location.origin}${basePath}/chat.html?conv=${message.conversationId}` : 
             null;
         
+        // Format timestamp safely
+        let timeString = 'Just now';
+        try {
+            if (message.timestamp && message.timestamp.toDate) {
+                timeString = message.timestamp.toDate().toLocaleString();
+            } else if (message.createdAt && message.createdAt.toDate) {
+                timeString = message.createdAt.toDate().toLocaleString();
+            }
+        } catch (e) {
+            console.log('Error formatting timestamp:', e);
+        }
+        
         messageDiv.innerHTML = `
             <div class="flex justify-between items-start mb-4">
                 <div class="flex items-center space-x-3">
@@ -345,9 +415,7 @@ function displayMessages(messages) {
                     </div>
                     <div>
                         <span class="font-semibold text-gray-800">Anonymous User</span>
-                        <div class="text-sm text-gray-500">
-                            ${message.timestamp?.toDate?.()?.toLocaleString() || 'Just now'}
-                        </div>
+                        <div class="text-sm text-gray-500">${timeString}</div>
                     </div>
                 </div>
                 <div class="text-right">
@@ -361,7 +429,7 @@ function displayMessages(messages) {
             </div>
             
             <div class="bg-gray-50 p-4 rounded-xl mb-4">
-                <p class="text-gray-800 text-lg leading-relaxed">${message.content}</p>
+                <p class="text-gray-800 text-lg leading-relaxed">${message.content || 'No content'}</p>
             </div>
             
             ${message.responses && message.responses.length > 0 ? `
@@ -371,16 +439,34 @@ function displayMessages(messages) {
                         Conversation (${message.responses.length} ${message.responses.length === 1 ? 'reply' : 'replies'})
                     </h4>
                     <div class="space-y-3">
-                        ${message.responses.slice(-3).map(response => `
+                        ${message.responses.slice(-3).map(response => {
+                            let responseTime = 'Just now';
+                            try {
+                                if (response.timestamp && response.timestamp.toDate) {
+                                    responseTime = response.timestamp.toDate().toLocaleString();
+                                }
+                            } catch (e) {
+                                console.log('Error formatting response timestamp:', e);
+                            }
+                            
+                            return `
                             <div class="${response.isOwner ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
                                 <div class="flex justify-between text-xs text-gray-600 mb-1">
                                     <span class="font-medium">${response.isOwner ? 'You' : 'Anonymous'}</span>
-                                    <span>${response.timestamp?.toDate?.()?.toLocaleString()}</span>
+                                    <span>${responseTime}</span>
                                 </div>
-                                <p class="text-gray-800">${response.content}</p>
+                                <p class="text-gray-800">${response.content || 'No content'}</p>
                             </div>
-                        `).join('')}
+                        `;
+                        }).join('')}
                     </div>
+                    ${message.responses.length > 3 ? `
+                        <div class="text-center mt-3">
+                            <a href="${chatLink}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                View all ${message.responses.length} replies →
+                            </a>
+                        </div>
+                    ` : ''}
                 </div>
             ` : ''}
             
@@ -422,7 +508,6 @@ function cancelReply(messageId) {
     document.getElementById(`replyText-${messageId}`).value = '';
 }
 
-// COMPLETED sendReply function
 async function sendReply(messageId) {
     const replyText = document.getElementById(`replyText-${messageId}`).value.trim();
     if (!replyText) return;
@@ -430,16 +515,23 @@ async function sendReply(messageId) {
     try {
         const messageRef = db.collection('messages').doc(messageId);
         const messageDoc = await messageRef.get();
+        
+        if (!messageDoc.exists) {
+            alert('Message not found');
+            return;
+        }
+        
         const currentMessage = messageDoc.data();
         
         await messageRef.update({
             responses: [...(currentMessage.responses || []), {
                 content: replyText,
-                timestamp: new Date(),
+                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                 isOwner: true
             }]
         });
         
+        console.log('Reply sent successfully');
         cancelReply(messageId);
         
     } catch (error) {
@@ -507,7 +599,7 @@ function displaySearchResults(results, searchTerm) {
                 <div>
                     <h3 class="text-xl font-semibold text-gray-800 mb-2">${profile.displayName}</h3>
                     <div class="flex items-center text-sm text-gray-500 space-x-4">
-                        <span>📅 Created ${profile.createdAt?.toDate?.()?.toLocaleDateString()}</span>
+                        <span>📅 Created ${profile.createdAt?.toDate?.()?.toLocaleDateString() || 'Recently'}</span>
                         <span>💬 Profile ID: ${profile.id.slice(0, 8)}...</span>
                     </div>
                 </div>
@@ -519,9 +611,10 @@ function displaySearchResults(results, searchTerm) {
     }
 }
 
-// Chat functionality
+// Chat functionality for bidirectional conversations
 async function initChat(conversationId) {
     try {
+        console.log('Loading chat for conversation:', conversationId);
         const querySnapshot = await db.collection('messages').where('conversationId', '==', conversationId).get();
         
         if (querySnapshot.empty) {
@@ -557,7 +650,7 @@ async function initChat(conversationId) {
             <div class="text-center py-16">
                 <div class="text-red-500 text-6xl mb-4">❌</div>
                 <h3 class="text-xl font-medium text-gray-600 mb-2">Error loading conversation</h3>
-                <p class="text-gray-500">Please try again later.</p>
+                <p class="text-gray-500">Please try again later: ${error.message}</p>
             </div>
         `;
     }
@@ -566,13 +659,20 @@ async function initChat(conversationId) {
 function displayChatConversation(messageData) {
     const container = document.getElementById('chatContainer');
     
+    let startDate = 'Recently';
+    try {
+        if (messageData.timestamp && messageData.timestamp.toDate) {
+            startDate = messageData.timestamp.toDate().toLocaleDateString();
+        }
+    } catch (e) {
+        console.log('Error formatting chat date:', e);
+    }
+    
     container.innerHTML = `
         <div class="bg-white rounded-lg shadow-md p-6 mb-6">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-xl font-bold text-gray-800">Anonymous Conversation</h2>
-                <span class="text-sm text-gray-500">
-                    Started ${messageData.timestamp?.toDate?.()?.toLocaleDateString()}
-                </span>
+                <span class="text-sm text-gray-500">Started ${startDate}</span>
             </div>
             
             <div class="space-y-4">
@@ -580,26 +680,37 @@ function displayChatConversation(messageData) {
                 <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
                     <div class="flex justify-between items-start mb-2">
                         <span class="font-medium text-blue-700">Anonymous Sender</span>
-                        <span class="text-xs text-blue-600">${messageData.timestamp?.toDate?.()?.toLocaleString()}</span>
+                        <span class="text-xs text-blue-600">${startDate}</span>
                     </div>
-                    <p class="text-gray-800">${messageData.content}</p>
+                    <p class="text-gray-800">${messageData.content || 'No content'}</p>
                 </div>
                 
                 <!-- Responses -->
                 <div id="chatResponses" class="space-y-3">
-                    ${messageData.responses ? messageData.responses.map(response => `
+                    ${messageData.responses ? messageData.responses.map(response => {
+                        let responseTime = 'Just now';
+                        try {
+                            if (response.timestamp && response.timestamp.toDate) {
+                                responseTime = response.timestamp.toDate().toLocaleString();
+                            }
+                        } catch (e) {
+                            console.log('Error formatting response timestamp:', e);
+                        }
+                        
+                        return `
                         <div class="${response.isOwner ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
                             <div class="flex justify-between items-start mb-2">
                                 <span class="font-medium ${response.isOwner ? 'text-green-700' : 'text-gray-700'}">
                                     ${response.isOwner ? 'Profile Owner' : 'Anonymous Sender'}
                                 </span>
                                 <span class="text-xs ${response.isOwner ? 'text-green-600' : 'text-gray-600'}">
-                                    ${response.timestamp?.toDate?.()?.toLocaleString()}
+                                    ${responseTime}
                                 </span>
                             </div>
-                            <p class="text-gray-800">${response.content}</p>
+                            <p class="text-gray-800">${response.content || 'No content'}</p>
                         </div>
-                    `).join('') : ''}
+                    `;
+                    }).join('') : ''}
                 </div>
             </div>
         </div>
@@ -627,7 +738,7 @@ function displayChatConversation(messageData) {
             await messageRef.update({
                 responses: [...(messageData.responses || []), {
                     content: replyText,
-                    timestamp: new Date(),
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                     isOwner: false  // This is the anonymous sender replying
                 }]
             });
@@ -640,3 +751,4 @@ function displayChatConversation(messageData) {
         }
     });
 }
+
