@@ -117,13 +117,13 @@ if (document.getElementById('quickLoginForm')) {
     document.getElementById('quickLoginForm').addEventListener('submit', async function(e) {
         e.preventDefault();
         
-        const profileId = document.getElementById('existingProfileId').value.trim();
+        const displayName = document.getElementById('existingDisplayName').value.trim();
         const passcode = document.getElementById('existingPasscode').value.trim();
         const loginBtn = document.getElementById('loginBtn');
         
         // Validation
-        if (!profileId) {
-            alert('Please enter your Profile ID');
+        if (!displayName) {
+            alert('Please enter your username (display name)');
             return;
         }
         if (!passcode) {
@@ -131,7 +131,7 @@ if (document.getElementById('quickLoginForm')) {
             return;
         }
         
-        console.log('Attempting login with profile:', profileId, 'passcode length:', passcode.length);
+        console.log('Attempting login with username:', displayName);
         
         loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
         loginBtn.disabled = true;
@@ -143,19 +143,24 @@ if (document.getElementById('quickLoginForm')) {
             }
             
             const db = firebase.firestore();
-            console.log('Firebase connection successful');
             
-            // Try to get the profile document
-            const doc = await db.collection('profiles').doc(profileId).get();
-            console.log('Profile document exists:', doc.exists);
+            // FIXED: Search by username (display name) instead of Profile ID
+            const querySnapshot = await db.collection('profiles')
+                .where('displayName', '==', displayName)
+                .limit(1)
+                .get();
             
-            if (doc.exists) {
+            if (!querySnapshot.empty) {
+                // Found the profile
+                const doc = querySnapshot.docs[0];
                 const profileData = doc.data();
-                console.log('Profile data retrieved:', { displayName: profileData.displayName, hasPasscode: !!profileData.passcode });
+                const profileId = doc.id;
                 
-                // Check passcode (case-sensitive exact match)
+                console.log('Profile found:', profileData.displayName);
+                
+                // Check passcode
                 if (profileData.passcode === passcode) {
-                    console.log('Passcode matches! Login successful');
+                    console.log('Login successful!');
                     
                     // Save session
                     currentUser = {
@@ -168,29 +173,30 @@ if (document.getElementById('quickLoginForm')) {
                     // Redirect to dashboard
                     const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
                     const dashboardUrl = `${basePath}/dashboard.html?id=${profileId}`;
-                    console.log('Redirecting to:', dashboardUrl);
                     
+                    console.log('Redirecting to:', dashboardUrl);
                     window.location.href = dashboardUrl;
                     return;
+                    
                 } else {
-                    console.log('Passcode mismatch. Expected:', profileData.passcode, 'Got:', passcode);
+                    console.log('Incorrect passcode');
                     alert('Incorrect passcode. Please check your passcode and try again.');
                 }
+                
             } else {
-                console.log('Profile document does not exist');
-                alert('Profile not found. Please check your Profile ID.\n\nTip: Profile ID should look like: 3khnvDsjFQeZ9LZqSUGM');
+                console.log('Username not found');
+                alert(`Username "${displayName}" not found.\n\nPlease check:\n• Spelling and capitalization (usernames are case-sensitive)\n• That you entered the exact username you chose when creating your profile`);
             }
             
         } catch (error) {
             console.error('Login error:', error);
-            alert(`Login failed: ${error.message}\n\nPlease check:\n1. Your internet connection\n2. Your Profile ID format\n3. Your passcode`);
+            alert(`Login failed: ${error.message}\n\nPlease check your internet connection and try again.`);
         }
         
         loginBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access My Dashboard';
         loginBtn.disabled = false;
     });
 }
-
 
 // Profile ID Finder functionality
 function showProfileIdFinder() {
@@ -580,7 +586,7 @@ function displayMessagesWithSession(messages) {
                             
                             // FIXED: Show current user's name in their own replies
                             const isOwnerReply = reply.sender === 'owner';
-                            const isCurrentUserReply = reply.isCurrentUser;
+                            const isCurrentUserReply = reply.senderProfileId === currentUser.profileId;
                             const replyerName = isOwnerReply ? 'You' : 
                                               isCurrentUserReply ? `${currentUser.displayName} (You)` : 'Anonymous';
                             
@@ -790,9 +796,9 @@ async function initChat(conversationId) {
             });
             
             // FIXED: Check if current user can participate
-            const canParticipate = checkChatParticipation(messageData);
+            const participationInfo = checkChatParticipation(messageData);
             
-            displaySecureChatConversation(messageData, canParticipate);
+            displaySecureChatConversation(messageData, participationInfo);
             
             // Listen for new replies in real-time
             db.collection('messages')
@@ -807,7 +813,7 @@ async function initChat(conversationId) {
                             ...replyDoc.data()
                         });
                     });
-                    displaySecureChatConversation(messageData, canParticipate);
+                    displaySecureChatConversation(messageData, participationInfo);
                 });
         }
         
@@ -981,5 +987,3 @@ function displaySecureChatConversation(messageData, participationInfo) {
         });
     }
 }
-
-
