@@ -112,50 +112,85 @@ if (document.getElementById('profileForm')) {
     });
 }
 
-// FIXED: Quick Login functionality
+// FIXED: Quick Login functionality with better error handling
 if (document.getElementById('quickLoginForm')) {
     document.getElementById('quickLoginForm').addEventListener('submit', async function(e) {
         e.preventDefault();
         
         const profileId = document.getElementById('existingProfileId').value.trim();
-        const passcode = document.getElementById('existingPasscode').value;
+        const passcode = document.getElementById('existingPasscode').value.trim();
         const loginBtn = document.getElementById('loginBtn');
+        
+        // Validation
+        if (!profileId) {
+            alert('Please enter your Profile ID');
+            return;
+        }
+        if (!passcode) {
+            alert('Please enter your passcode');
+            return;
+        }
+        
+        console.log('Attempting login with profile:', profileId, 'passcode length:', passcode.length);
         
         loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
         loginBtn.disabled = true;
         
         try {
-            console.log('Attempting login with profile:', profileId);
-            const doc = await db.collection('profiles').doc(profileId).get();
+            // Test Firebase connection first
+            if (typeof firebase === 'undefined' || firebase.apps.length === 0) {
+                throw new Error('Firebase not properly initialized');
+            }
             
-            if (doc.exists && doc.data().passcode === passcode) {
+            const db = firebase.firestore();
+            console.log('Firebase connection successful');
+            
+            // Try to get the profile document
+            const doc = await db.collection('profiles').doc(profileId).get();
+            console.log('Profile document exists:', doc.exists);
+            
+            if (doc.exists) {
                 const profileData = doc.data();
-                console.log('Login successful:', profileData.displayName);
+                console.log('Profile data retrieved:', { displayName: profileData.displayName, hasPasscode: !!profileData.passcode });
                 
-                // FIXED: Save session and redirect
-                currentUser = {
-                    profileId: profileId,
-                    displayName: profileData.displayName,
-                    isLoggedIn: true
-                };
-                saveSession();
-                
-                const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
-                window.location.href = `${basePath}/dashboard.html?id=${profileId}`;
+                // Check passcode (case-sensitive exact match)
+                if (profileData.passcode === passcode) {
+                    console.log('Passcode matches! Login successful');
+                    
+                    // Save session
+                    currentUser = {
+                        profileId: profileId,
+                        displayName: profileData.displayName,
+                        isLoggedIn: true
+                    };
+                    saveSession();
+                    
+                    // Redirect to dashboard
+                    const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
+                    const dashboardUrl = `${basePath}/dashboard.html?id=${profileId}`;
+                    console.log('Redirecting to:', dashboardUrl);
+                    
+                    window.location.href = dashboardUrl;
+                    return;
+                } else {
+                    console.log('Passcode mismatch. Expected:', profileData.passcode, 'Got:', passcode);
+                    alert('Incorrect passcode. Please check your passcode and try again.');
+                }
             } else {
-                alert('Invalid Profile ID or passcode. Please check your details.');
-                console.log('Login failed: Invalid credentials');
+                console.log('Profile document does not exist');
+                alert('Profile not found. Please check your Profile ID.\n\nTip: Profile ID should look like: 3khnvDsjFQeZ9LZqSUGM');
             }
             
         } catch (error) {
-            console.error('Error accessing profile:', error);
-            alert('Error accessing profile: ' + error.message);
+            console.error('Login error:', error);
+            alert(`Login failed: ${error.message}\n\nPlease check:\n1. Your internet connection\n2. Your Profile ID format\n3. Your passcode`);
         }
         
         loginBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access My Dashboard';
         loginBtn.disabled = false;
     });
 }
+
 
 // Profile ID Finder functionality
 function showProfileIdFinder() {
