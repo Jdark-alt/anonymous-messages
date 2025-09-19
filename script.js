@@ -19,7 +19,7 @@ let currentUser = {
     isLoggedIn: false
 };
 
-// Cache for profile names to avoid flickering
+// Cache for profile names (only for sent messages TO others)
 let profileNameCache = new Map();
 
 // Load session from localStorage on page load
@@ -44,7 +44,7 @@ function clearSession() {
     console.log('Session cleared');
 }
 
-// FIXED: Helper function to get profile name with caching (prevents flickering)
+// FIXED: Helper function to get profile name ONLY for messages you sent
 async function getProfileName(profileId) {
     if (profileNameCache.has(profileId)) {
         return profileNameCache.get(profileId);
@@ -61,8 +61,8 @@ async function getProfileName(profileId) {
         console.log('Error getting profile name:', error);
     }
     
-    profileNameCache.set(profileId, 'Anonymous');
-    return 'Anonymous';
+    profileNameCache.set(profileId, 'Anonymous User');
+    return 'Anonymous User';
 }
 
 // Load session when page starts
@@ -570,7 +570,7 @@ async function loadMessageReplies(messageData) {
     }
 }
 
-// FIXED: Display ALL your conversations with proper anonymity
+// FIXED: Display conversations with PROPER ANONYMITY (no names shown for received messages)
 function displayAllMyConversations(messages) {
     const container = document.getElementById('messagesContainer');
     if (!container) {
@@ -602,28 +602,27 @@ function displayAllMyConversations(messages) {
             console.log('Error formatting timestamp:', e);
         }
         
-        // FIXED: Determine conversation display (dashboard context only)
+        // FIXED: Proper anonymity - only show names for messages YOU sent
         let conversationTitle, conversationIcon, conversationColor;
         
         if (message.messageRole === 'receiver') {
-            // You received this message - show sender info ONLY in dashboard
-            conversationTitle = 'From: Anonymous User'; // Default
+            // FIXED: You received this message - keep it anonymous
+            conversationTitle = 'From: Anonymous User';
             conversationIcon = 'fa-inbox';
             conversationColor = 'from-blue-500 to-purple-500';
-            
-            // FIXED: Show sender name only in dashboard for received messages
-            if (message.senderSession && message.senderSession.displayName) {
-                conversationTitle = `From: ${message.senderSession.displayName}`;
-            }
         } else {
-            // You sent this message - get receiver's name
-            conversationTitle = 'To: Anonymous User'; // Default
+            // You sent this message - show recipient's name (you need to know who you messaged)
+            conversationTitle = 'To: Loading...';
             conversationIcon = 'fa-paper-plane';
             conversationColor = 'from-green-500 to-teal-500';
             
-            // FIXED: Get receiver name without flickering
-            const receiverName = await getProfileName(message.profileId);
-            conversationTitle = `To: ${receiverName}`;
+            // Load recipient name asynchronously
+            getProfileName(message.profileId).then(receiverName => {
+                const titleElement = document.getElementById(`title-${message.id}`);
+                if (titleElement) {
+                    titleElement.textContent = `To: ${receiverName}`;
+                }
+            });
         }
         
         messageDiv.innerHTML = `
@@ -633,7 +632,7 @@ function displayAllMyConversations(messages) {
                         <i class="fas ${conversationIcon} text-white text-lg"></i>
                     </div>
                     <div>
-                        <span class="font-semibold text-gray-800">${conversationTitle}</span>
+                        <span id="title-${message.id}" class="font-semibold text-gray-800">${conversationTitle}</span>
                         <div class="text-sm text-gray-500">${timeString}</div>
                         ${message.replies && message.replies.length > 0 ? 
                             `<div class="text-xs text-blue-600">💬 ${message.replies.length} ${message.replies.length === 1 ? 'reply' : 'replies'}</div>` : 
@@ -672,24 +671,16 @@ function displayAllMyConversations(messages) {
                                 console.log('Error formatting reply timestamp:', e);
                             }
                             
-                            // FIXED: Dashboard shows names, but chat stays anonymous
+                            // FIXED: Keep anonymity in dashboard replies too
                             let replyerName;
                             let replyerColor = 'bg-white border-l-4 border-gray-300';
                             
                             if (reply.senderProfileId === currentUser.profileId) {
                                 replyerName = `${currentUser.displayName} (You)`;
                                 replyerColor = 'bg-green-100 border-l-4 border-green-400';
-                            } else if (reply.sender === 'owner') {
-                                // Dashboard context: show recipient name for clarity
-                                if (message.messageRole === 'sender') {
-                                    replyerName = 'Recipient';
-                                } else {
-                                    replyerName = `${currentUser.displayName} (You)`;
-                                    replyerColor = 'bg-green-100 border-l-4 border-green-400';
-                                }
                             } else {
-                                // Dashboard context: show sender name for clarity
-                                replyerName = message.senderSession?.displayName || 'Anonymous';
+                                // FIXED: Show as Anonymous instead of real names
+                                replyerName = 'Anonymous';
                             }
                             
                             return `
@@ -873,7 +864,7 @@ function displaySearchResults(results, searchTerm) {
     }
 }
 
-// FIXED: Secure chat functionality with better error handling (prevents freezing)
+// FIXED: Secure chat functionality with better error handling
 async function initChat(conversationId) {
     try {
         console.log('Loading chat for conversation:', conversationId);
@@ -991,7 +982,7 @@ function checkChatParticipation(messageData) {
     return { canReply: false, reason: 'not_participant' };
 }
 
-// FIXED: Display secure chat with proper anonymity (names hidden in chat context)
+// FIXED: Display secure chat with proper anonymity
 function displaySecureChatConversation(messageData, participationInfo) {
     const container = document.getElementById('chatContainer');
     
@@ -1035,7 +1026,7 @@ function displaySecureChatConversation(messageData, participationInfo) {
                             console.log('Error formatting reply timestamp:', e);
                         }
                         
-                        // FIXED: Chat context maintains anonymity (no names shown)
+                        // FIXED: Chat context maintains complete anonymity
                         let replyerName = 'Anonymous';
                         let isCurrentUserReply = false;
                         
@@ -1130,7 +1121,7 @@ function displaySecureChatConversation(messageData, participationInfo) {
                     await db.collection('messages')
                         .doc(messageData.id)
                         .update({
-                            replyCount: firebase.firestore.FieldValue.increment(1),
+                            replyCount: firebase.firestore.FieldValue.increment1),
                             lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
                         });
                     
