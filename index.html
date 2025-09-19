@@ -149,69 +149,69 @@
             </div>
 
             <!-- Access Existing Profile Card -->
-            <div class="bg-white rounded-3xl shadow-xl card-hover overflow-hidden">
-                <div class="bg-gradient-to-r from-green-500 to-teal-600 p-6 text-white">
-                    <div class="flex items-center space-x-3 mb-2">
-                        <i class="fas fa-sign-in-alt text-2xl"></i>
-                        <h2 class="text-2xl font-bold">Access Your Profile</h2>
-                    </div>
-                    <p class="opacity-90">Already have a profile? Log in here</p>
-                </div>
-                
-                <div class="p-8">
-                    <form id="quickLoginForm" class="space-y-6">
-                        <div>
-                            <label class="block text-sm font-semibold mb-3 text-gray-700 flex items-center">
-                                <i class="fas fa-id-card mr-2 text-green-500"></i>
-                                Your Profile ID
-                            </label>
-                            <input 
-                                type="text" 
-                                id="existingProfileId" 
-                                class="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all outline-none" 
-                                placeholder="Paste your profile ID here" 
-                                required
-                            >
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-semibold mb-3 text-gray-700 flex items-center">
-                                <i class="fas fa-key mr-2 text-green-500"></i>
-                                Your Passcode
-                            </label>
-                            <input 
-                                type="password" 
-                                id="existingPasscode" 
-                                class="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all outline-none" 
-                                placeholder="Enter your passcode" 
-                                required
-                            >
-                        </div>
-                        
-                        <button 
-                            type="submit" 
-                            id="loginBtn" 
-                            class="w-full bg-gradient-to-r from-green-500 to-teal-600 text-white p-4 rounded-xl font-semibold hover:from-green-600 hover:to-teal-700 transition-all shadow-lg transform hover:scale-105"
-                        >
-                            <i class="fas fa-unlock mr-2"></i>
-                            Access My Dashboard
-                        </button>
-                    </form>
-                    
-                    <div class="mt-6 pt-6 border-t-2 border-gray-100">
-                        <p class="text-sm text-gray-600 mb-3 flex items-center">
-                            <i class="fas fa-question-circle mr-2 text-gray-400"></i>
-                            Don't have your Profile ID?
-                        </p>
-                        <button onclick="showProfileIdFinder()" class="w-full bg-gray-100 text-gray-700 p-3 rounded-xl hover:bg-gray-200 transition-all border-2 border-gray-200">
-                            <i class="fas fa-search mr-2"></i>
-                            Find My Profile ID
-                        </button>
-                    </div>
-                </div>
+<div class="bg-white rounded-3xl shadow-xl card-hover overflow-hidden">
+    <div class="bg-gradient-to-r from-green-500 to-teal-600 p-6 text-white">
+        <div class="flex items-center space-x-3 mb-2">
+            <i class="fas fa-sign-in-alt text-2xl"></i>
+            <h2 class="text-2xl font-bold">Access Your Profile</h2>
+        </div>
+        <p class="opacity-90">Already have a profile? Log in here</p>
+    </div>
+    
+    <div class="p-8">
+        <form id="quickLoginForm" class="space-y-6">
+            <div>
+                <label class="block text-sm font-semibold mb-3 text-gray-700 flex items-center">
+                    <i class="fas fa-user mr-2 text-green-500"></i>
+                    Your Username (Display Name)
+                </label>
+                <input 
+                    type="text" 
+                    id="existingDisplayName" 
+                    class="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all outline-none" 
+                    placeholder="e.g., CoolCat123, MysteryPerson" 
+                    required
+                >
+                <p class="text-xs text-gray-500 mt-1">The username you chose when creating your profile</p>
             </div>
+            
+            <div>
+                <label class="block text-sm font-semibold mb-3 text-gray-700 flex items-center">
+                    <i class="fas fa-key mr-2 text-green-500"></i>
+                    Your Passcode
+                </label>
+                <input 
+                    type="password" 
+                    id="existingPasscode" 
+                    class="w-full p-4 border-2 border-gray-200 rounded-xl focus:border-green-500 focus:ring-2 focus:ring-green-200 transition-all outline-none" 
+                    placeholder="Enter your passcode" 
+                    required
+                >
+            </div>
+            
+            <button 
+                type="submit" 
+                id="loginBtn" 
+                class="w-full bg-gradient-to-r from-green-500 to-teal-600 text-white p-4 rounded-xl font-semibold hover:from-green-600 hover:to-teal-700 transition-all shadow-lg transform hover:scale-105"
+            >
+                <i class="fas fa-unlock mr-2"></i>
+                Access My Dashboard
+            </button>
+        </form>
+        
+        <div class="mt-6 pt-6 border-t-2 border-gray-100">
+            <p class="text-sm text-gray-600 mb-3 flex items-center">
+                <i class="fas fa-question-circle mr-2 text-gray-400"></i>
+                Forgot your username?
+            </p>
+            <p class="text-xs text-gray-500">
+                Your username is the display name you chose when creating your profile (e.g., CoolCat123).
+                It's case-sensitive, so make sure to enter it exactly as you created it.
+            </p>
         </div>
     </div>
+</div>
+
 
     <!-- Features Section -->
     <div id="learnMore" class="bg-gradient-to-r from-gray-50 to-blue-50 py-16">
