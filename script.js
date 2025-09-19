@@ -112,90 +112,93 @@ if (document.getElementById('profileForm')) {
     });
 }
 
-// FIXED: Quick Login functionality with better error handling
+// FIXED: Quick Login functionality with username + passcode
 if (document.getElementById('quickLoginForm')) {
-    document.getElementById('quickLoginForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const displayName = document.getElementById('existingDisplayName').value.trim();
-        const passcode = document.getElementById('existingPasscode').value.trim();
-        const loginBtn = document.getElementById('loginBtn');
-        
-        // Validation
-        if (!displayName) {
-            alert('Please enter your username (display name)');
-            return;
-        }
-        if (!passcode) {
-            alert('Please enter your passcode');
-            return;
-        }
-        
-        console.log('Attempting login with username:', displayName);
-        
-        loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
-        loginBtn.disabled = true;
-        
-        try {
-            // Test Firebase connection first
-            if (typeof firebase === 'undefined' || firebase.apps.length === 0) {
-                throw new Error('Firebase not properly initialized');
+    console.log('Quick login form found - attaching event listener');
+    
+    const form = document.getElementById('quickLoginForm');
+    if (form) {
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            console.log('Login form submitted');
+            
+            const displayName = document.getElementById('existingDisplayName')?.value?.trim();
+            const passcode = document.getElementById('existingPasscode')?.value?.trim();
+            const loginBtn = document.getElementById('loginBtn');
+            
+            if (!displayName || !passcode) {
+                alert('Please enter both username and passcode');
+                console.log('Missing fields: displayName:', !!displayName, 'passcode:', !!passcode);
+                return;
             }
             
-            const db = firebase.firestore();
+            console.log('Login attempt with username:', displayName, 'passcode length:', passcode.length);
             
-            // FIXED: Search by username (display name) instead of Profile ID
-            const querySnapshot = await db.collection('profiles')
-                .where('displayName', '==', displayName)
-                .limit(1)
-                .get();
+            loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
+            loginBtn.disabled = true;
             
-            if (!querySnapshot.empty) {
-                // Found the profile
-                const doc = querySnapshot.docs[0];
-                const profileData = doc.data();
-                const profileId = doc.id;
-                
-                console.log('Profile found:', profileData.displayName);
-                
-                // Check passcode
-                if (profileData.passcode === passcode) {
-                    console.log('Login successful!');
-                    
-                    // Save session
-                    currentUser = {
-                        profileId: profileId,
-                        displayName: profileData.displayName,
-                        isLoggedIn: true
-                    };
-                    saveSession();
-                    
-                    // Redirect to dashboard
-                    const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
-                    const dashboardUrl = `${basePath}/dashboard.html?id=${profileId}`;
-                    
-                    console.log('Redirecting to:', dashboardUrl);
-                    window.location.href = dashboardUrl;
-                    return;
-                    
-                } else {
-                    console.log('Incorrect passcode');
-                    alert('Incorrect passcode. Please check your passcode and try again.');
+            try {
+                // Test Firebase connection
+                if (typeof firebase === 'undefined' || firebase.apps.length === 0) {
+                    throw new Error('Firebase not initialized');
                 }
+                console.log('Firebase connection successful');
                 
-            } else {
-                console.log('Username not found');
-                alert(`Username "${displayName}" not found.\n\nPlease check:\n• Spelling and capitalization (usernames are case-sensitive)\n• That you entered the exact username you chose when creating your profile`);
+                const db = firebase.firestore();
+                
+                // Search for profile by displayName
+                const querySnapshot = await db.collection('profiles')
+                    .where('displayName', '==', displayName)
+                    .limit(1)
+                    .get();
+                
+                console.log('Query snapshot size:', querySnapshot.size);
+                
+                if (!querySnapshot.empty) {
+                    const doc = querySnapshot.docs[0];
+                    const profileData = doc.data();
+                    const profileId = doc.id;
+                    
+                    console.log('Profile found:', profileId, profileData);
+                    
+                    // Check passcode
+                    if (profileData.passcode === passcode) {
+                        console.log('Passcode matches - login successful');
+                        
+                        // Save session
+                        currentUser = {
+                            profileId: profileId,
+                            displayName: profileData.displayName,
+                            isLoggedIn: true
+                        };
+                        saveSession();
+                        
+                        // Redirect to dashboard
+                        const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
+                        const dashboardUrl = `${basePath}/dashboard.html?id=${profileId}`;
+                        console.log('Redirecting to:', dashboardUrl);
+                        
+                        window.location.href = dashboardUrl;
+                    } else {
+                        console.log('Passcode mismatch');
+                        alert('Incorrect passcode. Please try again.');
+                    }
+                } else {
+                    console.log('No profile found for username:', displayName);
+                    alert('No profile found with that username. Please check your spelling (case-sensitive).');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                alert('Login failed: ' + error.message);
+            } finally {
+                loginBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access My Dashboard';
+                loginBtn.disabled = false;
             }
-            
-        } catch (error) {
-            console.error('Login error:', error);
-            alert(`Login failed: ${error.message}\n\nPlease check your internet connection and try again.`);
-        }
-        
-        loginBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access My Dashboard';
-        loginBtn.disabled = false;
-    });
+        });
+    } else {
+        console.error('Login form not found - check HTML ID');
+    }
 }
 
 // Profile ID Finder functionality
@@ -358,45 +361,52 @@ async function initDashboard(profileId) {
         return;
     }
     
-    document.getElementById('authForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const passcode = document.getElementById('loginPasscode').value;
-        const authBtn = document.getElementById('authBtn');
-        
-        authBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
-        authBtn.disabled = true;
-        
-        try {
-            const doc = await db.collection('profiles').doc(profileId).get();
+    const form = document.getElementById('authForm');
+    if (form) {
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
             
-            if (doc.exists && doc.data().passcode === passcode) {
-                const profile = doc.data();
-                console.log('Authentication successful for:', profile.displayName);
+            console.log('Dashboard auth form submitted');
+            
+            const passcode = document.getElementById('loginPasscode')?.value;
+            const authBtn = document.getElementById('authBtn');
+            
+            authBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
+            authBtn.disabled = true;
+            
+            try {
+                const doc = await db.collection('profiles').doc(profileId).get();
                 
-                // FIXED: Save session
-                currentUser = {
-                    profileId: profileId,
-                    displayName: profile.displayName,
-                    isLoggedIn: true
-                };
-                saveSession();
+                if (doc.exists && doc.data().passcode === passcode) {
+                    const profile = doc.data();
+                    console.log('Authentication successful for:', profile.displayName);
+                    
+                    // Save session
+                    currentUser = {
+                        profileId: profileId,
+                        displayName: profile.displayName,
+                        isLoggedIn: true
+                    };
+                    saveSession();
+                    
+                    await showDashboard(profileId);
+                    
+                } else {
+                    alert('Invalid passcode. Please try again.');
+                    authBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access Dashboard';
+                    authBtn.disabled = false;
+                }
                 
-                await showDashboard(profileId);
-                
-            } else {
-                alert('Invalid passcode. Please try again.');
+            } catch (error) {
+                console.error('Error authenticating:', error);
+                alert('Error accessing dashboard: ' + error.message);
                 authBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access Dashboard';
                 authBtn.disabled = false;
             }
-            
-        } catch (error) {
-            console.error('Error authenticating:', error);
-            alert('Error accessing dashboard: ' + error.message);
-            authBtn.innerHTML = '<i class="fas fa-unlock mr-2"></i>Access Dashboard';
-            authBtn.disabled = false;
-        }
-    });
+        });
+    } else {
+        console.error('Dashboard auth form not found');
+    }
 }
 
 // FIXED: Show dashboard with session info
