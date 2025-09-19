@@ -19,6 +19,9 @@ let currentUser = {
     isLoggedIn: false
 };
 
+// Cache for profile names to avoid flickering
+let profileNameCache = new Map();
+
 // Load session from localStorage on page load
 function loadSession() {
     const savedSession = localStorage.getItem('anonymousMessageSession');
@@ -39,6 +42,27 @@ function clearSession() {
     localStorage.removeItem('anonymousMessageSession');
     currentUser = { profileId: null, displayName: null, isLoggedIn: false };
     console.log('Session cleared');
+}
+
+// FIXED: Helper function to get profile name with caching (prevents flickering)
+async function getProfileName(profileId) {
+    if (profileNameCache.has(profileId)) {
+        return profileNameCache.get(profileId);
+    }
+    
+    try {
+        const doc = await db.collection('profiles').doc(profileId).get();
+        if (doc.exists) {
+            const name = doc.data().displayName;
+            profileNameCache.set(profileId, name);
+            return name;
+        }
+    } catch (error) {
+        console.log('Error getting profile name:', error);
+    }
+    
+    profileNameCache.set(profileId, 'Anonymous');
+    return 'Anonymous';
 }
 
 // Load session when page starts
@@ -546,7 +570,7 @@ async function loadMessageReplies(messageData) {
     }
 }
 
-// FIXED: Display ALL your conversations (sent and received)
+// FIXED: Display ALL your conversations with proper anonymity
 function displayAllMyConversations(messages) {
     const container = document.getElementById('messagesContainer');
     if (!container) {
@@ -557,7 +581,7 @@ function displayAllMyConversations(messages) {
     container.innerHTML = '';
     console.log('Displaying', messages.length, 'conversations');
     
-    messages.forEach((message, index) => {
+    messages.forEach(async (message, index) => {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'bg-white rounded-2xl shadow-lg p-6 mb-6';
         
@@ -578,34 +602,28 @@ function displayAllMyConversations(messages) {
             console.log('Error formatting timestamp:', e);
         }
         
-        // FIXED: Determine who this conversation is with and your role
-        let conversationTitle, conversationIcon, conversationColor, otherPartyName;
+        // FIXED: Determine conversation display (dashboard context only)
+        let conversationTitle, conversationIcon, conversationColor;
         
         if (message.messageRole === 'receiver') {
-            // You received this message - figure out who sent it
-            if (message.senderSession && message.senderSession.displayName) {
-                otherPartyName = message.senderSession.displayName;
-            } else {
-                otherPartyName = 'Anonymous User';
-            }
-            conversationTitle = `From: ${otherPartyName}`;
+            // You received this message - show sender info ONLY in dashboard
+            conversationTitle = 'From: Anonymous User'; // Default
             conversationIcon = 'fa-inbox';
             conversationColor = 'from-blue-500 to-purple-500';
+            
+            // FIXED: Show sender name only in dashboard for received messages
+            if (message.senderSession && message.senderSession.displayName) {
+                conversationTitle = `From: ${message.senderSession.displayName}`;
+            }
         } else {
             // You sent this message - get receiver's name
-            conversationTitle = `To: Loading...`;
+            conversationTitle = 'To: Anonymous User'; // Default
             conversationIcon = 'fa-paper-plane';
             conversationColor = 'from-green-500 to-teal-500';
             
-            // Async load receiver's name
-            db.collection('profiles').doc(message.profileId).get().then(doc => {
-                if (doc.exists) {
-                    const receiverDiv = document.getElementById(`receiver-name-${message.id}`);
-                    if (receiverDiv) {
-                        receiverDiv.textContent = `To: ${doc.data().displayName}`;
-                    }
-                }
-            });
+            // FIXED: Get receiver name without flickering
+            const receiverName = await getProfileName(message.profileId);
+            conversationTitle = `To: ${receiverName}`;
         }
         
         messageDiv.innerHTML = `
@@ -615,7 +633,7 @@ function displayAllMyConversations(messages) {
                         <i class="fas ${conversationIcon} text-white text-lg"></i>
                     </div>
                     <div>
-                        <span id="receiver-name-${message.id}" class="font-semibold text-gray-800">${conversationTitle}</span>
+                        <span class="font-semibold text-gray-800">${conversationTitle}</span>
                         <div class="text-sm text-gray-500">${timeString}</div>
                         ${message.replies && message.replies.length > 0 ? 
                             `<div class="text-xs text-blue-600">💬 ${message.replies.length} ${message.replies.length === 1 ? 'reply' : 'replies'}</div>` : 
@@ -654,7 +672,7 @@ function displayAllMyConversations(messages) {
                                 console.log('Error formatting reply timestamp:', e);
                             }
                             
-                            // FIXED: Show proper names for all participants
+                            // FIXED: Dashboard shows names, but chat stays anonymous
                             let replyerName;
                             let replyerColor = 'bg-white border-l-4 border-gray-300';
                             
@@ -662,17 +680,15 @@ function displayAllMyConversations(messages) {
                                 replyerName = `${currentUser.displayName} (You)`;
                                 replyerColor = 'bg-green-100 border-l-4 border-green-400';
                             } else if (reply.sender === 'owner') {
-                                // This is the profile owner replying
+                                // Dashboard context: show recipient name for clarity
                                 if (message.messageRole === 'sender') {
-                                    // You sent the original message, so owner is the receiver
                                     replyerName = 'Recipient';
                                 } else {
-                                    // You received the original message, so you're the owner
                                     replyerName = `${currentUser.displayName} (You)`;
                                     replyerColor = 'bg-green-100 border-l-4 border-green-400';
                                 }
                             } else {
-                                // Anonymous reply
+                                // Dashboard context: show sender name for clarity
                                 replyerName = message.senderSession?.displayName || 'Anonymous';
                             }
                             
@@ -857,11 +873,19 @@ function displaySearchResults(results, searchTerm) {
     }
 }
 
-// FIXED: Secure chat functionality - only participants can reply
+// FIXED: Secure chat functionality with better error handling (prevents freezing)
 async function initChat(conversationId) {
     try {
         console.log('Loading chat for conversation:', conversationId);
-        const querySnapshot = await db.collection('messages').where('conversationId', '==', conversationId).get();
+        
+        // FIXED: Add timeout to prevent freezing
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Chat load timeout')), 10000)
+        );
+        
+        const queryPromise = db.collection('messages').where('conversationId', '==', conversationId).get();
+        
+        const querySnapshot = await Promise.race([queryPromise, timeoutPromise]);
         
         if (querySnapshot.empty) {
             document.getElementById('chatContainer').innerHTML = `
@@ -880,41 +904,57 @@ async function initChat(conversationId) {
         });
         
         if (messageData) {
-            // Load replies from subcollection
-            const repliesSnapshot = await db.collection('messages')
-                .doc(messageData.id)
-                .collection('replies')
-                .orderBy('timestamp', 'asc')
-                .get();
-            
-            messageData.replies = [];
-            repliesSnapshot.forEach(replyDoc => {
-                messageData.replies.push({
-                    id: replyDoc.id,
-                    ...replyDoc.data()
+            // FIXED: Load replies with timeout protection
+            try {
+                const repliesSnapshot = await Promise.race([
+                    db.collection('messages')
+                        .doc(messageData.id)
+                        .collection('replies')
+                        .orderBy('timestamp', 'asc')
+                        .get(),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Replies load timeout')), 5000)
+                    )
+                ]);
+                
+                messageData.replies = [];
+                repliesSnapshot.forEach(replyDoc => {
+                    messageData.replies.push({
+                        id: replyDoc.id,
+                        ...replyDoc.data()
+                    });
                 });
-            });
+            } catch (repliesError) {
+                console.log('Error loading replies, continuing without them:', repliesError);
+                messageData.replies = [];
+            }
             
             // FIXED: Check if current user can participate
             const participationInfo = checkChatParticipation(messageData);
             
             displaySecureChatConversation(messageData, participationInfo);
             
-            // Listen for new replies in real-time
-            db.collection('messages')
-                .doc(messageData.id)
-                .collection('replies')
-                .orderBy('timestamp', 'asc')
-                .onSnapshot(repliesSnapshot => {
-                    messageData.replies = [];
-                    repliesSnapshot.forEach(replyDoc => {
-                        messageData.replies.push({
-                            id: replyDoc.id,
-                            ...replyDoc.data()
+            // FIXED: Listen for new replies with error handling
+            try {
+                db.collection('messages')
+                    .doc(messageData.id)
+                    .collection('replies')
+                    .orderBy('timestamp', 'asc')
+                    .onSnapshot(repliesSnapshot => {
+                        messageData.replies = [];
+                        repliesSnapshot.forEach(replyDoc => {
+                            messageData.replies.push({
+                                id: replyDoc.id,
+                                ...replyDoc.data()
+                            });
                         });
+                        displaySecureChatConversation(messageData, participationInfo);
+                    }, error => {
+                        console.log('Real-time listener error:', error);
                     });
-                    displaySecureChatConversation(messageData, participationInfo);
-                });
+            } catch (listenerError) {
+                console.log('Could not set up real-time listener:', listenerError);
+            }
         }
         
     } catch (error) {
@@ -923,7 +963,10 @@ async function initChat(conversationId) {
             <div class="text-center py-16">
                 <div class="text-red-500 text-6xl mb-4">❌</div>
                 <h3 class="text-xl font-medium text-gray-600 mb-2">Error loading conversation</h3>
-                <p class="text-gray-500">Please try again later: ${error.message}</p>
+                <p class="text-gray-500">Please try refreshing the page. Error: ${error.message}</p>
+                <button onclick="window.location.reload()" class="mt-4 bg-blue-500 text-white px-4 py-2 rounded">
+                    Refresh Page
+                </button>
             </div>
         `;
     }
@@ -948,7 +991,7 @@ function checkChatParticipation(messageData) {
     return { canReply: false, reason: 'not_participant' };
 }
 
-// FIXED: Display secure chat with participation control
+// FIXED: Display secure chat with proper anonymity (names hidden in chat context)
 function displaySecureChatConversation(messageData, participationInfo) {
     const container = document.getElementById('chatContainer');
     
@@ -973,7 +1016,7 @@ function displaySecureChatConversation(messageData, participationInfo) {
                 <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
                     <div class="flex justify-between items-start mb-2">
                         <span class="font-medium text-blue-700">
-                            ${participationInfo.role === 'sender' ? `${currentUser.displayName} (You)` : 'Anonymous Sender'}
+                            ${participationInfo.role === 'sender' ? 'You' : 'Anonymous Sender'}
                         </span>
                         <span class="text-xs text-blue-600">${startDate}</span>
                     </div>
@@ -992,15 +1035,22 @@ function displaySecureChatConversation(messageData, participationInfo) {
                             console.log('Error formatting reply timestamp:', e);
                         }
                         
-                        // FIXED: Show proper names based on current user context
+                        // FIXED: Chat context maintains anonymity (no names shown)
                         let replyerName = 'Anonymous';
                         let isCurrentUserReply = false;
                         
                         if (reply.senderProfileId === currentUser.profileId) {
-                            replyerName = `${currentUser.displayName} (You)`;
+                            replyerName = 'You';
                             isCurrentUserReply = true;
                         } else if (reply.sender === 'owner') {
-                            replyerName = participationInfo.role === 'receiver' ? `${currentUser.displayName} (You)` : 'Profile Owner';
+                            if (participationInfo.role === 'receiver') {
+                                replyerName = 'You';
+                                isCurrentUserReply = true;
+                            } else {
+                                replyerName = 'Recipient';
+                            }
+                        } else {
+                            replyerName = 'Anonymous';
                         }
                         
                         return `
@@ -1024,7 +1074,7 @@ function displaySecureChatConversation(messageData, participationInfo) {
         <!-- Reply Form or View-Only Message -->
         ${participationInfo.canReply ? `
             <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="text-lg font-medium mb-4">Continue the conversation as ${currentUser.displayName}</h3>
+                <h3 class="text-lg font-medium mb-4">Continue the conversation</h3>
                 <form id="chatReplyForm">
                     <textarea id="chatReplyText" placeholder="Write your reply..." class="w-full p-3 border border-gray-300 rounded-md mb-3 h-24 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required></textarea>
                     <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600">Send Reply</button>
@@ -1049,41 +1099,51 @@ function displaySecureChatConversation(messageData, participationInfo) {
     
     // Handle chat replies only if user can participate
     if (participationInfo.canReply) {
-        document.getElementById('chatReplyForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const replyText = document.getElementById('chatReplyText').value.trim();
-            if (!replyText) return;
-            
-            try {
-                // FIXED: Add reply with sender info
-                const senderType = participationInfo.role === 'receiver' ? 'owner' : 'anonymous';
+        const form = document.getElementById('chatReplyForm');
+        if (form) {
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
                 
-                await db.collection('messages')
-                    .doc(messageData.id)
-                    .collection('replies')
-                    .add({
-                        content: replyText,
-                        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                        sender: senderType,
-                        senderProfileId: currentUser.profileId,
-                        senderDisplayName: currentUser.displayName
-                    });
+                const replyText = document.getElementById('chatReplyText').value.trim();
+                if (!replyText) return;
                 
-                // Update reply count
-                await db.collection('messages')
-                    .doc(messageData.id)
-                    .update({
-                        replyCount: firebase.firestore.FieldValue.increment(1),
-                        lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                const submitBtn = e.target.querySelector('button[type="submit"]');
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Sending...';
                 
-                document.getElementById('chatReplyText').value = '';
-                
-            } catch (error) {
-                console.error('Error sending reply:', error);
-                alert('Error sending reply: ' + error.message);
-            }
-        });
+                try {
+                    // FIXED: Add reply with sender info
+                    const senderType = participationInfo.role === 'receiver' ? 'owner' : 'anonymous';
+                    
+                    await db.collection('messages')
+                        .doc(messageData.id)
+                        .collection('replies')
+                        .add({
+                            content: replyText,
+                            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                            sender: senderType,
+                            senderProfileId: currentUser.profileId,
+                            senderDisplayName: currentUser.displayName
+                        });
+                    
+                    // Update reply count
+                    await db.collection('messages')
+                        .doc(messageData.id)
+                        .update({
+                            replyCount: firebase.firestore.FieldValue.increment(1),
+                            lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    
+                    document.getElementById('chatReplyText').value = '';
+                    
+                } catch (error) {
+                    console.error('Error sending reply:', error);
+                    alert('Error sending reply: ' + error.message);
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Send Reply';
+                }
+            });
+        }
     }
 }
