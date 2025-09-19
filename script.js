@@ -12,6 +12,40 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+// SESSION MANAGEMENT: Track who's logged in
+let currentUser = {
+    profileId: null,
+    displayName: null,
+    isLoggedIn: false
+};
+
+// Load session from localStorage on page load
+function loadSession() {
+    const savedSession = localStorage.getItem('anonymousMessageSession');
+    if (savedSession) {
+        currentUser = JSON.parse(savedSession);
+        console.log('Session loaded:', currentUser);
+    }
+}
+
+// Save session to localStorage
+function saveSession() {
+    localStorage.setItem('anonymousMessageSession', JSON.stringify(currentUser));
+    console.log('Session saved:', currentUser);
+}
+
+// Clear session
+function clearSession() {
+    localStorage.removeItem('anonymousMessageSession');
+    currentUser = { profileId: null, displayName: null, isLoggedIn: false };
+    console.log('Session cleared');
+}
+
+// Load session when page starts
+document.addEventListener('DOMContentLoaded', function() {
+    loadSession();
+});
+
 // Debug logging
 console.log('Firebase initialized:', firebase.apps.length > 0);
 
@@ -48,6 +82,14 @@ if (document.getElementById('profileForm')) {
             
             console.log('Profile created with ID:', docRef.id);
             
+            // FIXED: Auto-login after profile creation
+            currentUser = {
+                profileId: docRef.id,
+                displayName: displayName,
+                isLoggedIn: true
+            };
+            saveSession();
+            
             // Show success message with CORRECTED URLs
             const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
             const baseUrl = `${window.location.origin}${basePath}`;
@@ -70,7 +112,7 @@ if (document.getElementById('profileForm')) {
     });
 }
 
-// Quick Login functionality
+// FIXED: Quick Login functionality
 if (document.getElementById('quickLoginForm')) {
     document.getElementById('quickLoginForm').addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -83,13 +125,26 @@ if (document.getElementById('quickLoginForm')) {
         loginBtn.disabled = true;
         
         try {
+            console.log('Attempting login with profile:', profileId);
             const doc = await db.collection('profiles').doc(profileId).get();
             
             if (doc.exists && doc.data().passcode === passcode) {
+                const profileData = doc.data();
+                console.log('Login successful:', profileData.displayName);
+                
+                // FIXED: Save session and redirect
+                currentUser = {
+                    profileId: profileId,
+                    displayName: profileData.displayName,
+                    isLoggedIn: true
+                };
+                saveSession();
+                
                 const basePath = window.location.pathname.replace('index.html', '').replace(/\/$/, '');
                 window.location.href = `${basePath}/dashboard.html?id=${profileId}`;
             } else {
                 alert('Invalid Profile ID or passcode. Please check your details.');
+                console.log('Login failed: Invalid credentials');
             }
             
         } catch (error) {
@@ -177,18 +232,28 @@ async function loadProfileForSending(profileId) {
                     // Generate unique conversation ID
                     const conversationId = `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                     
-                    // FIXED: Add message with proper structure
-                    const docRef = await db.collection('messages').add({
-                        profileId: profileId,
+                    // FIXED: Store sender info for chat security
+                    const messageData = {
+                        profileId: profileId, // Receiver
                         conversationId: conversationId,
                         content: content,
                         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         isAnonymous: true,
                         messageType: 'initial',
-                        replyCount: 0 // Track reply count separately
-                    });
+                        replyCount: 0,
+                        // FIXED: Track participants for chat security
+                        participants: {
+                            receiver: profileId,
+                            sender: currentUser.isLoggedIn ? currentUser.profileId : 'anonymous'
+                        },
+                        senderSession: currentUser.isLoggedIn ? {
+                            profileId: currentUser.profileId,
+                            displayName: currentUser.displayName
+                        } : null
+                    };
                     
+                    const docRef = await db.collection('messages').add(messageData);
                     console.log('Message sent successfully:', docRef.id);
                     
                     // Generate conversation link
@@ -241,9 +306,16 @@ function sendAnother() {
     sendBtn.disabled = false;
 }
 
-// Dashboard functionality
+// FIXED: Dashboard functionality with session management
 async function initDashboard(profileId) {
     console.log('Initializing dashboard for profile:', profileId);
+    
+    // Check if user is already logged in to this profile
+    if (currentUser.isLoggedIn && currentUser.profileId === profileId) {
+        console.log('User already logged in, skipping authentication');
+        await showDashboard(profileId);
+        return;
+    }
     
     document.getElementById('authForm').addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -261,18 +333,15 @@ async function initDashboard(profileId) {
                 const profile = doc.data();
                 console.log('Authentication successful for:', profile.displayName);
                 
-                // Show dashboard
-                document.getElementById('loginForm').style.display = 'none';
-                document.getElementById('dashboardContent').style.display = 'block';
-                document.getElementById('profileDisplayName').textContent = profile.displayName;
+                // FIXED: Save session
+                currentUser = {
+                    profileId: profileId,
+                    displayName: profile.displayName,
+                    isLoggedIn: true
+                };
+                saveSession();
                 
-                // Correct URL generation
-                const basePath = window.location.pathname.replace('dashboard.html', '').replace(/\/$/, '');
-                const shareUrl = `${window.location.origin}${basePath}/send.html?id=${profileId}`;
-                document.getElementById('shareUrl').value = shareUrl;
-                
-                // FIXED: Load messages with subcollection replies
-                loadMessagesWithReplies(profileId);
+                await showDashboard(profileId);
                 
             } else {
                 alert('Invalid passcode. Please try again.');
@@ -289,9 +358,40 @@ async function initDashboard(profileId) {
     });
 }
 
-// FIXED: Load messages with subcollection replies
-function loadMessagesWithReplies(profileId) {
-    console.log('Loading messages with replies for profile:', profileId);
+// FIXED: Show dashboard with session info
+async function showDashboard(profileId) {
+    // Show dashboard
+    document.getElementById('loginForm').style.display = 'none';
+    document.getElementById('dashboardContent').style.display = 'block';
+    document.getElementById('profileDisplayName').textContent = currentUser.displayName;
+    
+    // Add logout button
+    const logoutBtn = document.createElement('button');
+    logoutBtn.innerHTML = '<i class="fas fa-sign-out-alt mr-2"></i>Logout';
+    logoutBtn.className = 'bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 ml-4';
+    logoutBtn.onclick = function() {
+        clearSession();
+        window.location.href = 'index.html';
+    };
+    
+    const headerDiv = document.getElementById('profileDisplayName').parentElement;
+    if (!headerDiv.querySelector('.logout-btn')) {
+        logoutBtn.classList.add('logout-btn');
+        headerDiv.appendChild(logoutBtn);
+    }
+    
+    // Correct URL generation
+    const basePath = window.location.pathname.replace('dashboard.html', '').replace(/\/$/, '');
+    const shareUrl = `${window.location.origin}${basePath}/send.html?id=${profileId}`;
+    document.getElementById('shareUrl').value = shareUrl;
+    
+    // Load messages with session context
+    loadMessagesWithSession(profileId);
+}
+
+// FIXED: Load messages with session-aware display
+function loadMessagesWithSession(profileId) {
+    console.log('Loading messages for profile:', profileId, 'Current user:', currentUser);
     
     db.collection('messages')
         .where('profileId', '==', profileId)
@@ -314,10 +414,14 @@ function loadMessagesWithReplies(profileId) {
                     
                     messageData.replies = [];
                     repliesSnapshot.forEach(replyDoc => {
-                        messageData.replies.push({
-                            id: replyDoc.id,
-                            ...replyDoc.data()
-                        });
+                        const replyData = { id: replyDoc.id, ...replyDoc.data() };
+                        
+                        // FIXED: Add context about who sent the reply
+                        if (replyData.senderProfileId === currentUser.profileId) {
+                            replyData.isCurrentUser = true;
+                        }
+                        
+                        messageData.replies.push(replyData);
                     });
                     
                     console.log('Message with replies loaded:', messageData.id, 'replies:', messageData.replies.length);
@@ -353,15 +457,15 @@ function loadMessagesWithReplies(profileId) {
                     </div>
                 `;
             } else {
-                displayMessagesWithReplies(loadedMessages);
+                displayMessagesWithSession(loadedMessages);
             }
         }, function(error) {
             console.error('Error loading messages:', error);
         });
 }
 
-// FIXED: Display messages with replies from subcollections
-function displayMessagesWithReplies(messages) {
+// FIXED: Display messages with session-aware naming
+function displayMessagesWithSession(messages) {
     const container = document.getElementById('messagesContainer');
     if (!container) {
         console.error('Messages container not found');
@@ -392,14 +496,19 @@ function displayMessagesWithReplies(messages) {
             console.log('Error formatting timestamp:', e);
         }
         
+        // FIXED: Check if this message was sent by current user
+        const isFromCurrentUser = message.senderSession && message.senderSession.profileId === currentUser.profileId;
+        const senderName = isFromCurrentUser ? `${currentUser.displayName} (You)` : 'Anonymous User';
+        const senderColor = isFromCurrentUser ? 'from-green-500 to-blue-500' : 'from-purple-500 to-pink-500';
+        
         messageDiv.innerHTML = `
             <div class="flex justify-between items-start mb-4">
                 <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
-                        <i class="fas fa-user-secret text-white"></i>
+                    <div class="w-10 h-10 bg-gradient-to-r ${senderColor} rounded-full flex items-center justify-center">
+                        <i class="fas ${isFromCurrentUser ? 'fa-user' : 'fa-user-secret'} text-white"></i>
                     </div>
                     <div>
-                        <span class="font-semibold text-gray-800">Anonymous User</span>
+                        <span class="font-semibold text-gray-800">${senderName}</span>
                         <div class="text-sm text-gray-500">${timeString}</div>
                     </div>
                 </div>
@@ -434,10 +543,16 @@ function displayMessagesWithReplies(messages) {
                                 console.log('Error formatting reply timestamp:', e);
                             }
                             
+                            // FIXED: Show current user's name in their own replies
+                            const isOwnerReply = reply.sender === 'owner';
+                            const isCurrentUserReply = reply.isCurrentUser;
+                            const replyerName = isOwnerReply ? 'You' : 
+                                              isCurrentUserReply ? `${currentUser.displayName} (You)` : 'Anonymous';
+                            
                             return `
-                            <div class="${reply.sender === 'owner' ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
+                            <div class="${(isOwnerReply || isCurrentUserReply) ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
                                 <div class="flex justify-between text-xs text-gray-600 mb-1">
-                                    <span class="font-medium">${reply.sender === 'owner' ? 'You' : 'Anonymous'}</span>
+                                    <span class="font-medium">${replyerName}</span>
                                     <span>${replyTime}</span>
                                 </div>
                                 <p class="text-gray-800">${reply.content || 'No content'}</p>
@@ -458,7 +573,7 @@ function displayMessagesWithReplies(messages) {
             <div id="reply-${message.id}" class="hidden bg-blue-50 p-4 rounded-xl border-2 border-blue-200">
                 <div class="flex items-center mb-3">
                     <i class="fas fa-reply mr-2 text-blue-600"></i>
-                    <span class="font-semibold text-blue-800">Reply to this message</span>
+                    <span class="font-semibold text-blue-800">Reply as ${currentUser.displayName}</span>
                 </div>
                 <textarea id="replyText-${message.id}" placeholder="Write your reply..." class="w-full p-3 border-2 border-blue-200 rounded-lg mb-3 h-24 resize-none focus:border-blue-500 transition-all outline-none"></textarea>
                 <div class="flex gap-2">
@@ -493,7 +608,7 @@ function cancelReply(messageId) {
     document.getElementById(`replyText-${messageId}`).value = '';
 }
 
-// FIXED: Send reply using subcollection (solves the serverTimestamp error)
+// FIXED: Send reply with session info
 async function sendReply(messageId) {
     const replyText = document.getElementById(`replyText-${messageId}`).value.trim();
     if (!replyText) return;
@@ -501,14 +616,16 @@ async function sendReply(messageId) {
     try {
         console.log('Sending reply to message:', messageId);
         
-        // FIXED: Save reply as document in subcollection instead of array
+        // FIXED: Save reply with sender info
         await db.collection('messages')
             .doc(messageId)
             .collection('replies')
             .add({
                 content: replyText,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                sender: 'owner' // Profile owner replying
+                sender: 'owner', // Profile owner replying
+                senderProfileId: currentUser.profileId,
+                senderDisplayName: currentUser.displayName
             });
         
         // Update reply count in main message document
@@ -599,7 +716,7 @@ function displaySearchResults(results, searchTerm) {
     }
 }
 
-// FIXED: Chat functionality with subcollection replies
+// FIXED: Secure chat functionality - only participants can reply
 async function initChat(conversationId) {
     try {
         console.log('Loading chat for conversation:', conversationId);
@@ -637,7 +754,10 @@ async function initChat(conversationId) {
                 });
             });
             
-            displayChatConversation(messageData);
+            // FIXED: Check if current user can participate
+            const canParticipate = checkChatParticipation(messageData);
+            
+            displaySecureChatConversation(messageData, canParticipate);
             
             // Listen for new replies in real-time
             db.collection('messages')
@@ -652,7 +772,7 @@ async function initChat(conversationId) {
                             ...replyDoc.data()
                         });
                     });
-                    displayChatConversation(messageData);
+                    displaySecureChatConversation(messageData, canParticipate);
                 });
         }
         
@@ -668,7 +788,27 @@ async function initChat(conversationId) {
     }
 }
 
-function displayChatConversation(messageData) {
+// FIXED: Check if current user can participate in chat
+function checkChatParticipation(messageData) {
+    if (!currentUser.isLoggedIn) {
+        return { canReply: false, reason: 'not_logged_in' };
+    }
+    
+    // Check if user is the receiver (profile owner)
+    if (currentUser.profileId === messageData.profileId) {
+        return { canReply: true, role: 'receiver' };
+    }
+    
+    // Check if user is the original sender
+    if (messageData.senderSession && messageData.senderSession.profileId === currentUser.profileId) {
+        return { canReply: true, role: 'sender' };
+    }
+    
+    return { canReply: false, reason: 'not_participant' };
+}
+
+// FIXED: Display secure chat with participation control
+function displaySecureChatConversation(messageData, participationInfo) {
     const container = document.getElementById('chatContainer');
     
     let startDate = 'Recently';
@@ -691,7 +831,9 @@ function displayChatConversation(messageData) {
                 <!-- Original Message -->
                 <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded">
                     <div class="flex justify-between items-start mb-2">
-                        <span class="font-medium text-blue-700">Anonymous Sender</span>
+                        <span class="font-medium text-blue-700">
+                            ${participationInfo.role === 'sender' ? `${currentUser.displayName} (You)` : 'Anonymous Sender'}
+                        </span>
                         <span class="text-xs text-blue-600">${startDate}</span>
                     </div>
                     <p class="text-gray-800">${messageData.content || 'No content'}</p>
@@ -709,13 +851,24 @@ function displayChatConversation(messageData) {
                             console.log('Error formatting reply timestamp:', e);
                         }
                         
+                        // FIXED: Show proper names based on current user context
+                        let replyerName = 'Anonymous';
+                        let isCurrentUserReply = false;
+                        
+                        if (reply.senderProfileId === currentUser.profileId) {
+                            replyerName = `${currentUser.displayName} (You)`;
+                            isCurrentUserReply = true;
+                        } else if (reply.sender === 'owner') {
+                            replyerName = participationInfo.role === 'receiver' ? `${currentUser.displayName} (You)` : 'Profile Owner';
+                        }
+                        
                         return `
-                        <div class="${reply.sender === 'owner' ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
+                        <div class="${isCurrentUserReply ? 'bg-green-50 border-l-4 border-green-400' : 'bg-gray-50 border-l-4 border-gray-400'} p-4 rounded">
                             <div class="flex justify-between items-start mb-2">
-                                <span class="font-medium ${reply.sender === 'owner' ? 'text-green-700' : 'text-gray-700'}">
-                                    ${reply.sender === 'owner' ? 'Profile Owner' : 'Anonymous Sender'}
+                                <span class="font-medium ${isCurrentUserReply ? 'text-green-700' : 'text-gray-700'}">
+                                    ${replyerName}
                                 </span>
-                                <span class="text-xs ${reply.sender === 'owner' ? 'text-green-600' : 'text-gray-600'}">
+                                <span class="text-xs ${isCurrentUserReply ? 'text-green-600' : 'text-gray-600'}">
                                     ${replyTime}
                                 </span>
                             </div>
@@ -727,49 +880,71 @@ function displayChatConversation(messageData) {
             </div>
         </div>
         
-        <!-- Reply Form -->
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <h3 class="text-lg font-medium mb-4">Continue the conversation</h3>
-            <form id="chatReplyForm">
-                <textarea id="chatReplyText" placeholder="Write your reply..." class="w-full p-3 border border-gray-300 rounded-md mb-3 h-24 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required></textarea>
-                <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600">Send Reply</button>
-            </form>
-        </div>
+        <!-- Reply Form or View-Only Message -->
+        ${participationInfo.canReply ? `
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-medium mb-4">Continue the conversation as ${currentUser.displayName}</h3>
+                <form id="chatReplyForm">
+                    <textarea id="chatReplyText" placeholder="Write your reply..." class="w-full p-3 border border-gray-300 rounded-md mb-3 h-24 resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" required></textarea>
+                    <button type="submit" class="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600">Send Reply</button>
+                </form>
+            </div>
+        ` : `
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="bg-yellow-50 border border-yellow-200 p-4 rounded-md">
+                    <div class="flex items-center">
+                        <i class="fas fa-eye text-yellow-600 mr-2"></i>
+                        <h3 class="font-semibold text-yellow-800">View-Only Mode</h3>
+                    </div>
+                    <p class="text-yellow-700 text-sm mt-2">
+                        ${participationInfo.reason === 'not_logged_in' 
+                            ? 'You need to be logged in to participate in this conversation.' 
+                            : 'Only the original participants can reply in this conversation.'}
+                    </p>
+                </div>
+            </div>
+        `}
     `;
     
-    // Handle chat replies
-    document.getElementById('chatReplyForm').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const replyText = document.getElementById('chatReplyText').value.trim();
-        if (!replyText) return;
-        
-        try {
-            // FIXED: Add reply to subcollection
-            await db.collection('messages')
-                .doc(messageData.id)
-                .collection('replies')
-                .add({
-                    content: replyText,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    sender: 'anonymous' // Anonymous sender replying
-                });
+    // Handle chat replies only if user can participate
+    if (participationInfo.canReply) {
+        document.getElementById('chatReplyForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
             
-            // Update reply count
-            await db.collection('messages')
-                .doc(messageData.id)
-                .update({
-                    replyCount: firebase.firestore.FieldValue.increment(1),
-                    lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
+            const replyText = document.getElementById('chatReplyText').value.trim();
+            if (!replyText) return;
             
-            document.getElementById('chatReplyText').value = '';
-            
-        } catch (error) {
-            console.error('Error sending reply:', error);
-            alert('Error sending reply: ' + error.message);
-        }
-    });
+            try {
+                // FIXED: Add reply with sender info
+                const senderType = participationInfo.role === 'receiver' ? 'owner' : 'anonymous';
+                
+                await db.collection('messages')
+                    .doc(messageData.id)
+                    .collection('replies')
+                    .add({
+                        content: replyText,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                        sender: senderType,
+                        senderProfileId: currentUser.profileId,
+                        senderDisplayName: currentUser.displayName
+                    });
+                
+                // Update reply count
+                await db.collection('messages')
+                    .doc(messageData.id)
+                    .update({
+                        replyCount: firebase.firestore.FieldValue.increment(1),
+                        lastReplyAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                
+                document.getElementById('chatReplyText').value = '';
+                
+            } catch (error) {
+                console.error('Error sending reply:', error);
+                alert('Error sending reply: ' + error.message);
+            }
+        });
+    }
 }
 
 
