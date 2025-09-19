@@ -436,87 +436,118 @@ async function showDashboard(profileId) {
     const shareUrl = `${window.location.origin}${basePath}/send.html?id=${profileId}`;
     document.getElementById('shareUrl').value = shareUrl;
     
-    // Load messages with session context
-    loadMessagesWithSession(profileId);
+    // FIXED: Load ALL messages you're involved in (sent + received)
+    loadAllMyConversations(profileId);
 }
 
-// FIXED: Load messages with session-aware display
-function loadMessagesWithSession(profileId) {
-    console.log('Loading messages for profile:', profileId, 'Current user:', currentUser);
+// FIXED: Load ALL conversations you're involved in (sent AND received)
+function loadAllMyConversations(profileId) {
+    console.log('Loading ALL conversations for profile:', profileId, 'Current user:', currentUser);
     
-    db.collection('messages')
-        .where('profileId', '==', profileId)
-        .onSnapshot(async function(querySnapshot) {
-            console.log('Query snapshot received, size:', querySnapshot.size);
-            
-            const messages = [];
-            
-            // Process each message and fetch its replies
-            const messagePromises = querySnapshot.docs.map(async (doc) => {
-                const messageData = { id: doc.id, ...doc.data() };
-                
-                // Fetch replies from subcollection
-                try {
-                    const repliesSnapshot = await db.collection('messages')
-                        .doc(doc.id)
-                        .collection('replies')
-                        .orderBy('timestamp', 'asc')
-                        .get();
-                    
-                    messageData.replies = [];
-                    repliesSnapshot.forEach(replyDoc => {
-                        const replyData = { id: replyDoc.id, ...replyDoc.data() };
-                        
-                        // FIXED: Add context about who sent the reply
-                        if (replyData.senderProfileId === currentUser.profileId) {
-                            replyData.isCurrentUser = true;
-                        }
-                        
-                        messageData.replies.push(replyData);
-                    });
-                    
-                    console.log('Message with replies loaded:', messageData.id, 'replies:', messageData.replies.length);
-                } catch (replyError) {
-                    console.log('Error loading replies for message', doc.id, replyError);
-                    messageData.replies = [];
-                }
-                
-                return messageData;
-            });
-            
-            // Wait for all messages and their replies to load
-            const loadedMessages = await Promise.all(messagePromises);
-            
-            // Sort messages by timestamp
-            loadedMessages.sort((a, b) => {
-                const timeA = a.timestamp?.toDate?.() || a.createdAt?.toDate?.() || new Date();
-                const timeB = b.timestamp?.toDate?.() || b.createdAt?.toDate?.() || new Date();
-                return timeB - timeA;
-            });
-            
-            console.log('All messages loaded:', loadedMessages.length);
-            document.getElementById('messageCount').textContent = `${loadedMessages.length} message${loadedMessages.length !== 1 ? 's' : ''}`;
-            
-            if (loadedMessages.length === 0) {
-                document.getElementById('messagesContainer').innerHTML = `
-                    <div class="text-center py-16 bg-white rounded-2xl shadow-lg">
-                        <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <i class="fas fa-inbox text-3xl text-blue-500"></i>
-                        </div>
-                        <h3 class="text-xl font-medium text-gray-600 mb-2">No messages yet</h3>
-                        <p class="text-gray-500">Share your profile link to start receiving anonymous messages!</p>
-                    </div>
-                `;
-            } else {
-                displayMessagesWithSession(loadedMessages);
+    // Query 1: Messages sent TO you (where you're the receiver)
+    const receivedMessagesQuery = db.collection('messages')
+        .where('profileId', '==', profileId);
+    
+    // Query 2: Messages sent BY you (where you're the sender)
+    const sentMessagesQuery = db.collection('messages')
+        .where('senderSession.profileId', '==', profileId);
+    
+    // Listen to both queries and combine results
+    Promise.all([
+        receivedMessagesQuery.get(),
+        sentMessagesQuery.get()
+    ]).then(async ([receivedSnapshot, sentSnapshot]) => {
+        console.log('Received messages:', receivedSnapshot.size);
+        console.log('Sent messages:', sentSnapshot.size);
+        
+        const allMessages = [];
+        const processedMessageIds = new Set(); // Avoid duplicates
+        
+        // Process received messages
+        const receivedPromises = receivedSnapshot.docs.map(async (doc) => {
+            if (!processedMessageIds.has(doc.id)) {
+                processedMessageIds.add(doc.id);
+                const messageData = { id: doc.id, ...doc.data(), messageRole: 'receiver' };
+                await loadMessageReplies(messageData);
+                allMessages.push(messageData);
             }
-        }, function(error) {
-            console.error('Error loading messages:', error);
         });
+        
+        // Process sent messages
+        const sentPromises = sentSnapshot.docs.map(async (doc) => {
+            if (!processedMessageIds.has(doc.id)) {
+                processedMessageIds.add(doc.id);
+                const messageData = { id: doc.id, ...doc.data(), messageRole: 'sender' };
+                await loadMessageReplies(messageData);
+                allMessages.push(messageData);
+            }
+        });
+        
+        // Wait for all messages and replies to load
+        await Promise.all([...receivedPromises, ...sentPromises]);
+        
+        // Sort messages by timestamp (newest first)
+        allMessages.sort((a, b) => {
+            const timeA = a.timestamp?.toDate?.() || a.createdAt?.toDate?.() || new Date();
+            const timeB = b.timestamp?.toDate?.() || b.createdAt?.toDate?.() || new Date();
+            return timeB - timeA;
+        });
+        
+        console.log('All conversations loaded:', allMessages.length);
+        document.getElementById('messageCount').textContent = `${allMessages.length} conversation${allMessages.length !== 1 ? 's' : ''}`;
+        
+        if (allMessages.length === 0) {
+            document.getElementById('messagesContainer').innerHTML = `
+                <div class="text-center py-16 bg-white rounded-2xl shadow-lg">
+                    <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <i class="fas fa-inbox text-3xl text-blue-500"></i>
+                    </div>
+                    <h3 class="text-xl font-medium text-gray-600 mb-2">No conversations yet</h3>
+                    <p class="text-gray-500">Share your profile link or send messages to start conversations!</p>
+                </div>
+            `;
+        } else {
+            displayAllMyConversations(allMessages);
+        }
+    }).catch(error => {
+        console.error('Error loading conversations:', error);
+    });
+    
+    // Set up real-time listeners for updates
+    receivedMessagesQuery.onSnapshot(() => loadAllMyConversations(profileId));
+    sentMessagesQuery.onSnapshot(() => loadAllMyConversations(profileId));
 }
 
-// FIXED: Display messages with session-aware naming
-function displayMessagesWithSession(messages) {
+// Helper function to load replies for a message
+async function loadMessageReplies(messageData) {
+    try {
+        const repliesSnapshot = await db.collection('messages')
+            .doc(messageData.id)
+            .collection('replies')
+            .orderBy('timestamp', 'asc')
+            .get();
+        
+        messageData.replies = [];
+        repliesSnapshot.forEach(replyDoc => {
+            const replyData = { id: replyDoc.id, ...replyDoc.data() };
+            
+            // Add context about who sent the reply
+            if (replyData.senderProfileId === currentUser.profileId) {
+                replyData.isCurrentUser = true;
+            }
+            
+            messageData.replies.push(replyData);
+        });
+        
+        console.log('Message with replies loaded:', messageData.id, 'replies:', messageData.replies.length);
+    } catch (replyError) {
+        console.log('Error loading replies for message', messageData.id, replyError);
+        messageData.replies = [];
+    }
+}
+
+// FIXED: Display ALL your conversations (sent and received)
+function displayAllMyConversations(messages) {
     const container = document.getElementById('messagesContainer');
     if (!container) {
         console.error('Messages container not found');
@@ -524,7 +555,7 @@ function displayMessagesWithSession(messages) {
     }
     
     container.innerHTML = '';
-    console.log('Displaying', messages.length, 'messages');
+    console.log('Displaying', messages.length, 'conversations');
     
     messages.forEach((message, index) => {
         const messageDiv = document.createElement('div');
@@ -547,27 +578,56 @@ function displayMessagesWithSession(messages) {
             console.log('Error formatting timestamp:', e);
         }
         
-        // FIXED: Check if this message was sent by current user
-        const isFromCurrentUser = message.senderSession && message.senderSession.profileId === currentUser.profileId;
-        const senderName = isFromCurrentUser ? `${currentUser.displayName} (You)` : 'Anonymous User';
-        const senderColor = isFromCurrentUser ? 'from-green-500 to-blue-500' : 'from-purple-500 to-pink-500';
+        // FIXED: Determine who this conversation is with and your role
+        let conversationTitle, conversationIcon, conversationColor, otherPartyName;
+        
+        if (message.messageRole === 'receiver') {
+            // You received this message - figure out who sent it
+            if (message.senderSession && message.senderSession.displayName) {
+                otherPartyName = message.senderSession.displayName;
+            } else {
+                otherPartyName = 'Anonymous User';
+            }
+            conversationTitle = `From: ${otherPartyName}`;
+            conversationIcon = 'fa-inbox';
+            conversationColor = 'from-blue-500 to-purple-500';
+        } else {
+            // You sent this message - get receiver's name
+            conversationTitle = `To: Loading...`;
+            conversationIcon = 'fa-paper-plane';
+            conversationColor = 'from-green-500 to-teal-500';
+            
+            // Async load receiver's name
+            db.collection('profiles').doc(message.profileId).get().then(doc => {
+                if (doc.exists) {
+                    const receiverDiv = document.getElementById(`receiver-name-${message.id}`);
+                    if (receiverDiv) {
+                        receiverDiv.textContent = `To: ${doc.data().displayName}`;
+                    }
+                }
+            });
+        }
         
         messageDiv.innerHTML = `
             <div class="flex justify-between items-start mb-4">
                 <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 bg-gradient-to-r ${senderColor} rounded-full flex items-center justify-center">
-                        <i class="fas ${isFromCurrentUser ? 'fa-user' : 'fa-user-secret'} text-white"></i>
+                    <div class="w-12 h-12 bg-gradient-to-r ${conversationColor} rounded-full flex items-center justify-center">
+                        <i class="fas ${conversationIcon} text-white text-lg"></i>
                     </div>
                     <div>
-                        <span class="font-semibold text-gray-800">${senderName}</span>
+                        <span id="receiver-name-${message.id}" class="font-semibold text-gray-800">${conversationTitle}</span>
                         <div class="text-sm text-gray-500">${timeString}</div>
+                        ${message.replies && message.replies.length > 0 ? 
+                            `<div class="text-xs text-blue-600">💬 ${message.replies.length} ${message.replies.length === 1 ? 'reply' : 'replies'}</div>` : 
+                            '<div class="text-xs text-gray-400">💬 No replies yet</div>'
+                        }
                     </div>
                 </div>
                 <div class="text-right">
                     ${chatLink ? `
                         <a href="${chatLink}" class="inline-flex items-center text-sm text-blue-500 hover:text-blue-700 bg-blue-50 px-3 py-1 rounded-full">
-                            <i class="fas fa-external-link-alt mr-1"></i>
-                            Full Chat
+                            <i class="fas fa-comments mr-1"></i>
+                            Open Chat
                         </a>
                     ` : ''}
                 </div>
@@ -581,10 +641,10 @@ function displayMessagesWithSession(messages) {
                 <div class="bg-blue-50 rounded-xl p-4 mb-4 border-l-4 border-blue-400">
                     <h4 class="text-sm font-semibold mb-3 text-blue-800 flex items-center">
                         <i class="fas fa-comments mr-2"></i>
-                        Conversation (${message.replies.length} ${message.replies.length === 1 ? 'reply' : 'replies'})
+                        Recent Replies (${message.replies.length} total)
                     </h4>
                     <div class="space-y-3">
-                        ${message.replies.slice(-3).map(reply => {
+                        ${message.replies.slice(-2).map(reply => {
                             let replyTime = 'Just now';
                             try {
                                 if (reply.timestamp && reply.timestamp.toDate) {
@@ -594,14 +654,30 @@ function displayMessagesWithSession(messages) {
                                 console.log('Error formatting reply timestamp:', e);
                             }
                             
-                            // FIXED: Show current user's name in their own replies
-                            const isOwnerReply = reply.sender === 'owner';
-                            const isCurrentUserReply = reply.senderProfileId === currentUser.profileId;
-                            const replyerName = isOwnerReply ? 'You' : 
-                                              isCurrentUserReply ? `${currentUser.displayName} (You)` : 'Anonymous';
+                            // FIXED: Show proper names for all participants
+                            let replyerName;
+                            let replyerColor = 'bg-white border-l-4 border-gray-300';
+                            
+                            if (reply.senderProfileId === currentUser.profileId) {
+                                replyerName = `${currentUser.displayName} (You)`;
+                                replyerColor = 'bg-green-100 border-l-4 border-green-400';
+                            } else if (reply.sender === 'owner') {
+                                // This is the profile owner replying
+                                if (message.messageRole === 'sender') {
+                                    // You sent the original message, so owner is the receiver
+                                    replyerName = 'Recipient';
+                                } else {
+                                    // You received the original message, so you're the owner
+                                    replyerName = `${currentUser.displayName} (You)`;
+                                    replyerColor = 'bg-green-100 border-l-4 border-green-400';
+                                }
+                            } else {
+                                // Anonymous reply
+                                replyerName = message.senderSession?.displayName || 'Anonymous';
+                            }
                             
                             return `
-                            <div class="${(isOwnerReply || isCurrentUserReply) ? 'bg-green-100 border-l-4 border-green-400' : 'bg-white border-l-4 border-gray-300'} p-3 rounded">
+                            <div class="${replyerColor} p-3 rounded">
                                 <div class="flex justify-between text-xs text-gray-600 mb-1">
                                     <span class="font-medium">${replyerName}</span>
                                     <span>${replyTime}</span>
@@ -611,7 +687,7 @@ function displayMessagesWithSession(messages) {
                         `;
                         }).join('')}
                     </div>
-                    ${message.replies.length > 3 ? `
+                    ${message.replies.length > 2 ? `
                         <div class="text-center mt-3">
                             <a href="${chatLink}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
                                 View all ${message.replies.length} replies →
@@ -638,7 +714,7 @@ function displayMessagesWithSession(messages) {
             </div>
             
             <button onclick="showReply('${message.id}')" id="replyBtn-${message.id}" class="flex items-center text-blue-600 hover:text-blue-800 font-medium transition-all">
-                <i class="fas fa-reply mr-2"></i>Reply to this message
+                <i class="fas fa-reply mr-2"></i>Reply to this conversation
             </button>
         `;
         
@@ -667,6 +743,20 @@ async function sendReply(messageId) {
     try {
         console.log('Sending reply to message:', messageId);
         
+        // Get the original message to determine sender type
+        const messageDoc = await db.collection('messages').doc(messageId).get();
+        const messageData = messageDoc.data();
+        
+        // Determine sender type based on your role in the conversation
+        let senderType;
+        if (messageData.profileId === currentUser.profileId) {
+            // You're the receiver of the original message
+            senderType = 'owner';
+        } else {
+            // You're the sender of the original message
+            senderType = 'anonymous';
+        }
+        
         // FIXED: Save reply with sender info
         await db.collection('messages')
             .doc(messageId)
@@ -674,7 +764,7 @@ async function sendReply(messageId) {
             .add({
                 content: replyText,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                sender: 'owner', // Profile owner replying
+                sender: senderType,
                 senderProfileId: currentUser.profileId,
                 senderDisplayName: currentUser.displayName
             });
